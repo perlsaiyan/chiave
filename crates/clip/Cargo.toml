@@ -11,3 +11,6 @@ anyhow.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
 zeroize.workspace = true
+wl-clipboard-rs = "0.9"
+libc = "0.2.189"
+which = "8.0.6"
