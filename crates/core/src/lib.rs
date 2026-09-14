@@ -2,6 +2,7 @@
 
 pub mod fields;
 pub mod fingerprint;
+pub mod generate;
 pub mod open;
 pub mod path;
 #[cfg(any(test, feature = "test-support"))]

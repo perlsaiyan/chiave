@@ -433,3 +433,27 @@ fn keepassxc_reads_chiave_edits_and_vice_versa() {
     );
     assert_eq!(hits.len(), 1);
 }
+
+#[test]
+fn upgrade_kdbx3_to_kdbx4_preserves_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/keepassxc/NewDatabase.kdbx");
+    let copy = dir.path().join("up.kdbx");
+    std::fs::copy(fixture, &copy).unwrap();
+    let creds = Credentials::password("a");
+    let mut v = Vault::open(&copy, &creds, false).unwrap();
+    assert!(!v.can_save());
+    let before = Fingerprint::of(v.db());
+    assert!(v.upgrade_to_kdbx4().unwrap());
+    assert!(!v.upgrade_to_kdbx4().unwrap());
+    assert!(v.can_save());
+    let report = v.save(SaveOptions::default()).unwrap();
+    assert!(report.backup.is_some());
+    let r = Vault::open(&copy, &creds, false).unwrap();
+    assert_eq!(r.version().to_string(), "KDBX4.1");
+    assert!(before.diff(&Fingerprint::of(r.db())).is_empty());
+    assert!(r.stats().kdf.contains("Argon2id"));
+    let old = Vault::open(&report.backup.unwrap(), &creds, true).unwrap();
+    assert_eq!(old.version().to_string(), "KDBX3.1");
+}

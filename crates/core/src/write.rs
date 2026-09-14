@@ -533,6 +533,28 @@ impl Vault {
         Ok(())
     }
 
+    // ----- upgrade ----------------------------------------------------------
+
+    /// `upgrade`: convert an in-memory KDBX3 database to KDBX4 with strong KDF settings.
+    /// Nothing touches the disk until `save`, which keeps a `.bak` of the old file.
+    /// Returns false if the database was already KDBX4.
+    pub fn upgrade_to_kdbx4(&mut self) -> Result<bool, WriteError> {
+        if self.read_only {
+            return Err(WriteError::ReadOnly);
+        }
+        if matches!(self.version(), DatabaseVersion::KDB4(_)) {
+            return Ok(false);
+        }
+        let cfg = strong_config();
+        self.db.config.version = cfg.version;
+        self.db.config.kdf_config = cfg.kdf_config;
+        self.db.config.outer_cipher_config = cfg.outer_cipher_config;
+        self.db.config.inner_cipher_config = cfg.inner_cipher_config;
+        self.db.config.compression_config = cfg.compression_config;
+        self.touch();
+        Ok(true)
+    }
+
     // ----- save -------------------------------------------------------------
 
     /// Serialize, verify by re-parsing, then atomically replace the file.
