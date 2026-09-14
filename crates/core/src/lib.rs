@@ -1,5 +1,6 @@
 //! chiave-core: the vault model shared by the shell, CLI and TUI front ends.
 
+pub mod audit;
 pub mod fields;
 pub mod fingerprint;
 pub mod generate;
@@ -10,6 +11,7 @@ pub mod testdb;
 pub mod vault;
 pub mod write;
 
+pub use audit::{AgeField, PurgeOptions, PurgedEntry, PwckRow};
 pub use fingerprint::Fingerprint;
 pub use keepass::config::DatabaseVersion;
 pub use keepass::db::{EntryId, GroupId};

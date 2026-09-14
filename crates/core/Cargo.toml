@@ -16,6 +16,7 @@ chrono = "0.4"
 uuid = "1"
 tempfile = "3"
 getrandom = "0.3"
+zxcvbn = "3.1.1"
 
 [features]
 default = []
