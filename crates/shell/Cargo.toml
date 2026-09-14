@@ -9,3 +9,14 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 thiserror.workspace = true
+chiave-core.workspace = true
+chiave-clip.workspace = true
+clap = { version = "4", features = ["derive"] }
+rustyline = "18"
+shell-words = "1"
+rpassword = "7"
+chrono = "0.4"
+
+[dev-dependencies]
+chiave-core = { path = "../core", features = ["test-support"] }
+tempfile = "3"
