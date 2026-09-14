@@ -121,11 +121,15 @@ generator flags. Add: --tui, --shell, --clip-timeout, --no-clip-hint.
 
 ## 6. Phases
 
-Progress (2026-09-14): phase 0 done; phase 1 core done (shell and clip crates
-in progress); phase 2 core done (mutations, history, recycle bin, atomic
-verified save with backup and external-change detection, `create` with strong
-KDF, two-way keepassxc-cli oracle tests). Remaining for phase 2: shell commands
-over it, `upgrade` for KDBX3, password generator, pwck, purge, attachments.
+Progress (2026-09-14): phases 0 and 1 done (core, read-only shell, one-shot
+CLI, config, clipboard backends with detached auto-clear helper). Phase 2
+core done: mutations with history, recycle bin, attachments, atomic verified
+save with backup and external-change detection, `create` with strong KDF,
+`upgrade` for KDBX3, password generator, two-way keepassxc-cli oracle tests.
+keepass-rs is vendored with attachment-reference fixes (see
+vendor/keepass-rs/CHIAVE-PATCHES.md). Remaining for phase 2: shell write
+commands (new, edit, set, rm, mkdir, rmdir, mv, cp, rename, save, saveas,
+newdb, passwd, attach, upgrade), pwck, purge. Then phase 3 TUI.
 
 0. Bootstrap (half a day): pick name, `cargo new --workspace`, rustup on the
    Ubuntu dev box, CI, fetch KeePassXC fixtures, write a throwaway KDBX4 vault

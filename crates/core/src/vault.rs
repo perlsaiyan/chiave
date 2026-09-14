@@ -700,8 +700,8 @@ impl Vault {
             path: self.path.clone(),
             name: self.db.meta.database_name.clone(),
             version: cfg.version.to_string(),
-            kdf: format!("{:?}", cfg.kdf_config),
-            cipher: format!("{:?}", cfg.outer_cipher_config),
+            kdf: describe_kdf(&cfg.kdf_config),
+            cipher: describe_cipher(&cfg.outer_cipher_config),
             groups,
             entries,
             expired,
@@ -709,6 +709,44 @@ impl Vault {
             recycle_bin_enabled: self.db.meta.recyclebin_enabled.unwrap_or(false),
             read_only: self.read_only,
         }
+    }
+}
+
+/// Human-readable KDF description, e.g. "Argon2id (10 iterations, 64 MiB, 2 threads)".
+pub fn describe_kdf(kdf: &keepass::config::KdfConfig) -> String {
+    use keepass::config::KdfConfig;
+    match kdf {
+        KdfConfig::Aes { rounds } => format!("AES-KDF ({rounds} rounds)"),
+        KdfConfig::Argon2 {
+            iterations,
+            memory,
+            parallelism,
+            ..
+        } => format!(
+            "Argon2d ({iterations} iterations, {} MiB, {parallelism} threads)",
+            memory / (1024 * 1024)
+        ),
+        KdfConfig::Argon2id {
+            iterations,
+            memory,
+            parallelism,
+            ..
+        } => format!(
+            "Argon2id ({iterations} iterations, {} MiB, {parallelism} threads)",
+            memory / (1024 * 1024)
+        ),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Human-readable outer cipher name.
+pub fn describe_cipher(c: &keepass::config::OuterCipherConfig) -> String {
+    use keepass::config::OuterCipherConfig;
+    match c {
+        OuterCipherConfig::AES256 => "AES-256".into(),
+        OuterCipherConfig::ChaCha20 => "ChaCha20".into(),
+        OuterCipherConfig::Twofish => "Twofish".into(),
+        other => format!("{other:?}"),
     }
 }
 

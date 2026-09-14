@@ -283,7 +283,7 @@ fn create_uses_strong_kdf() {
     assert!(!v.has_unsaved_changes());
     let s = v.stats();
     assert!(s.kdf.contains("Argon2id"), "{}", s.kdf);
-    assert!(s.kdf.contains("67108864"), "{}", s.kdf);
+    assert!(s.kdf.contains("64 MiB"), "{}", s.kdf);
     assert!(s.recycle_bin_enabled);
     assert_eq!(s.name.as_deref(), Some("Mine"));
     assert!(Vault::create(&path, &creds, "Again").is_err());
