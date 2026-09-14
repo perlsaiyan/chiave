@@ -1,0 +1,4 @@
+/target
+*.kdbx.bak
+*.lock.kdbx
+/scratch/

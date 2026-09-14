@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/perlsaiyan/chiave"
+rust-version = "1.88"
+
+[workspace.dependencies]
+chiave-core = { path = "crates/core" }
+chiave-clip = { path = "crates/clip" }
+chiave-shell = { path = "crates/shell" }
+chiave-tui = { path = "crates/tui" }
+anyhow = "1"
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+secrecy = "0.10"
+
+[package]
+name = "chiave"
+description = "KeePass KDBX shell and TUI for the terminal (a compiled kpcli successor)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "chiave"
+path = "src/main.rs"
+
+[dependencies]
+chiave-core.workspace = true
+chiave-clip.workspace = true
+chiave-shell.workspace = true
+chiave-tui.workspace = true
+anyhow.workspace = true
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
