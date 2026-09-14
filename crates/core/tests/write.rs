@@ -618,3 +618,50 @@ fn migrate_notes_otp_to_native_field() {
         );
     }
 }
+
+#[test]
+fn upgrade_kdb1_to_kdbx4_and_keepassxc_reads_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/keepassxc/basic.kdb");
+    let copy = dir.path().join("basic.kdb");
+    std::fs::copy(fixture, &copy).unwrap();
+    let creds = Credentials::password("masterpw");
+    let mut v = Vault::open(&copy, &creds, false).unwrap();
+    assert_eq!(v.version().to_string(), "KDB");
+    assert!(!v.can_save());
+    let mut had_meta = false;
+    for hit in v.find("Meta-Info", Default::default()) {
+        had_meta |= hit.title == "Meta-Info";
+    }
+    assert!(
+        had_meta,
+        "KeePassXC's basic.kdb carries Meta-Info pseudo-entries"
+    );
+    assert!(v.upgrade_to_kdbx4().unwrap());
+    assert!(
+        v.find("Meta-Info", Default::default()).is_empty(),
+        "meta entries stripped"
+    );
+    let before = Fingerprint::of(v.db());
+    let entries_before = v.stats().entries;
+    assert!(entries_before > 0);
+    let out = dir.path().join("basic.kdbx");
+    let report = v.save_to(&out, SaveOptions::default()).unwrap();
+    assert!(report.verified);
+    assert!(report.backup.is_none(), "new file, nothing to back up");
+    let r = Vault::open(&out, &creds, false).unwrap();
+    assert_eq!(r.version().to_string(), "KDBX4.1");
+    assert!(before.diff(&Fingerprint::of(r.db())).is_empty());
+    assert_eq!(r.stats().entries, entries_before);
+    if let Some(cli) = kpxc() {
+        let (ok, ls, err) = run(
+            &cli,
+            &["ls", "-R", "-f", out.to_str().unwrap()],
+            "masterpw\n",
+        );
+        assert!(ok, "{err}");
+        assert!(ls.contains("Test entry"), "{ls}");
+        assert!(!ls.contains("Meta-Info"), "{ls}");
+    }
+}

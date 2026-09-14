@@ -674,6 +674,9 @@ impl Vault {
         if matches!(self.version(), DatabaseVersion::KDB4(_)) {
             return Ok(false);
         }
+        if matches!(self.version(), DatabaseVersion::KDB(_)) {
+            self.strip_kdb1_meta_entries();
+        }
         let cfg = strong_config();
         self.db.config.version = cfg.version;
         self.db.config.kdf_config = cfg.kdf_config;
@@ -682,6 +685,38 @@ impl Vault {
         self.db.config.compression_config = cfg.compression_config;
         self.touch();
         Ok(true)
+    }
+
+    /// KeePass 1.x kept per-group UI state in pseudo-entries titled "Meta-Info" with
+    /// user "SYSTEM" and URL "$". They carry nothing a KDBX4 vault needs and KeePassXC's
+    /// importer drops them too. Returns how many were removed.
+    pub fn strip_kdb1_meta_entries(&mut self) -> usize {
+        let mut victims = Vec::new();
+        let mut stack = vec![self.root()];
+        while let Some(g) = stack.pop() {
+            if let Some(group) = self.db.group(g) {
+                victims.extend(
+                    group
+                        .entries()
+                        .filter(|e| {
+                            e.get_title() == Some("Meta-Info")
+                                && e.get_username() == Some("SYSTEM")
+                                && e.get_url() == Some("$")
+                        })
+                        .map(|e| e.id()),
+                );
+                stack.extend(group.groups().map(|c| c.id()));
+            }
+        }
+        for id in &victims {
+            if let Some(em) = self.db.entry_mut(*id) {
+                em.remove();
+            }
+        }
+        if !victims.is_empty() {
+            self.touch();
+        }
+        victims.len()
     }
 
     // ----- save -------------------------------------------------------------

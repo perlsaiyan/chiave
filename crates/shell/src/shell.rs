@@ -395,7 +395,7 @@ impl Shell {
             Command::Saveas { file } => self.cmd_saveas(&file, out)?,
             Command::Passwd => self.cmd_passwd(out)?,
             Command::Newdb { file } => self.cmd_newdb(&file, out)?,
-            Command::Upgrade => self.cmd_upgrade(out)?,
+            Command::Upgrade { output } => self.cmd_upgrade(output.as_deref(), out)?,
             Command::Pwgen {
                 length,
                 words,

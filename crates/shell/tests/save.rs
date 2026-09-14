@@ -262,3 +262,44 @@ fn switching_databases_will_not_discard_unsaved_changes() {
         .contains("Unsaved changes"));
     assert!(h.shell.vault().unwrap().resolve_group("/Unsaved").is_ok());
 }
+
+#[test]
+fn upgrade_converts_a_kdb1_file_to_a_new_kdbx_beside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/keepassxc/basic.kdb");
+    let src = dir.path().join("basic.kdb");
+    std::fs::copy(&fixture, &src).unwrap();
+    let original = std::fs::read(&src).unwrap();
+    let vault =
+        chiave_core::Vault::open(&src, &chiave_core::Credentials::password("masterpw"), false)
+            .unwrap();
+    let mut h = common::harness_from(dir, vault, chiave_shell::shell::ShellOptions::default());
+    let out = h.ok("upgrade");
+    assert!(out.contains("saved to"), "{out}");
+    assert!(out.contains("basic.kdbx"), "{out}");
+    assert!(out.contains("was not modified"), "{out}");
+    let new_path = src.with_extension("kdbx");
+    assert!(new_path.exists());
+    assert_eq!(
+        std::fs::read(&src).unwrap(),
+        original,
+        "the .kdb is untouched"
+    );
+    assert!(!h.run("quit").contains("Unsaved"), "already saved");
+    let r = chiave_core::Vault::open(
+        &new_path,
+        &chiave_core::Credentials::password("masterpw"),
+        false,
+    )
+    .unwrap();
+    assert_eq!(r.version().to_string(), "KDBX4.1");
+    // second run on the same source refuses to clobber the new file
+    let vault =
+        chiave_core::Vault::open(&src, &chiave_core::Credentials::password("masterpw"), false)
+            .unwrap();
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut h2 = common::harness_from(dir2, vault, chiave_shell::shell::ShellOptions::default());
+    let err = h2.run("upgrade");
+    assert!(err.contains("already exists"), "{err}");
+}

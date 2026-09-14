@@ -29,27 +29,32 @@ const PASSWORD_ENV: &str = "CHIAVE_PASSWORD";
 )]
 struct Cli {
     /// Database to open
-    #[arg(long, value_name = "PATH", env = "CHIAVE_KDB")]
+    #[arg(global = true, long, value_name = "PATH", env = "CHIAVE_KDB")]
     kdb: Option<PathBuf>,
 
     /// Key file that unlocks the database
-    #[arg(long = "key", value_name = "FILE", env = "CHIAVE_KEYFILE")]
+    #[arg(
+        global = true,
+        long = "key",
+        value_name = "FILE",
+        env = "CHIAVE_KEYFILE"
+    )]
     key: Option<PathBuf>,
 
     /// Read the master password from the first line of this file
-    #[arg(long, value_name = "FILE")]
+    #[arg(global = true, long, value_name = "FILE")]
     pwfile: Option<PathBuf>,
 
     /// Never write to the database
-    #[arg(long)]
+    #[arg(global = true, long)]
     readonly: bool,
 
     /// Lock the vault after this many idle seconds (0 disables)
-    #[arg(long, value_name = "SECS")]
+    #[arg(global = true, long, value_name = "SECS")]
     timeout: Option<u64>,
 
     /// Shell history file (/dev/null disables it)
-    #[arg(long, value_name = "FILE")]
+    #[arg(global = true, long, value_name = "FILE")]
     histfile: Option<PathBuf>,
 
     /// Run a command and exit; may be repeated
@@ -57,23 +62,23 @@ struct Cli {
     command: Vec<String>,
 
     /// Seconds a copied secret stays on the clipboard (0 never clears)
-    #[arg(long = "clip-timeout", value_name = "SECS")]
+    #[arg(global = true, long = "clip-timeout", value_name = "SECS")]
     clip_timeout: Option<u64>,
 
     /// Do not touch the clipboard at all
-    #[arg(long = "no-clip")]
+    #[arg(global = true, long = "no-clip")]
     no_clip: bool,
 
     /// Word list for passphrase generation (`w` at a password prompt, `pwgen --words`)
-    #[arg(long = "pwwords", value_name = "FILE")]
+    #[arg(global = true, long = "pwwords", value_name = "FILE")]
     pwwords: Option<PathBuf>,
 
     /// Do not save automatically after a one-shot command that changed the database
-    #[arg(long = "no-save")]
+    #[arg(global = true, long = "no-save")]
     no_save: bool,
 
     /// Disable mouse support in the TUI (mouse capture makes text selection need Shift+drag)
-    #[arg(long = "no-mouse")]
+    #[arg(global = true, long = "no-mouse")]
     no_mouse: bool,
 
     /// Database to open, kpcli style

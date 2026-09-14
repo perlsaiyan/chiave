@@ -251,7 +251,12 @@ pub enum Command {
         file: PathBuf,
     },
     /// Convert a KDBX3 database to KDBX4 (takes effect on the next save)
-    Upgrade,
+    Upgrade {
+        /// Write the converted database here instead of the default
+        /// (a `.kdb` source becomes `<name>.kdbx` next to it; a `.kdbx` source is saved in place)
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
     /// Generate passwords and print them
     Pwgen {
         /// Password length

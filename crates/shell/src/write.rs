@@ -737,16 +737,50 @@ impl Shell {
         Ok(())
     }
 
-    pub(crate) fn cmd_upgrade(&mut self, out: &mut dyn Write) -> anyhow::Result<()> {
+    pub(crate) fn cmd_upgrade(
+        &mut self,
+        output: Option<&Path>,
+        out: &mut dyn Write,
+    ) -> anyhow::Result<()> {
         let vault = self.need_vault()?;
-        if vault.upgrade_to_kdbx4()? {
-            writeln!(
+        if !vault.upgrade_to_kdbx4()? {
+            writeln!(out, "Already KDBX4; nothing to do.")?;
+            return Ok(());
+        }
+        let source = vault.path().to_path_buf();
+        let is_kdb1 = source
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("kdb"))
+            .unwrap_or(false);
+        let target = output
+            .map(Path::to_path_buf)
+            .or_else(|| is_kdb1.then(|| source.with_extension("kdbx")));
+        match target {
+            Some(target) => {
+                if target.exists() {
+                    anyhow::bail!(
+                        "{} already exists; pass --output <file> to choose another name",
+                        target.display()
+                    );
+                }
+                let report = vault.save_to(&target, SaveOptions::default())?;
+                writeln!(
+                    out,
+                    "Converted to KDBX4 (Argon2id) and saved to {} ({} bytes, verified).",
+                    report.path.display(),
+                    report.bytes
+                )?;
+                writeln!(out, "The original {} was not modified.", source.display())?;
+                writeln!(
+                    out,
+                    "Point --kdb, CHIAVE_KDB or config.toml at the new file from now on."
+                )?;
+            }
+            None => writeln!(
                 out,
                 "Converted to KDBX4 with Argon2id in memory. Run `save` to write it; \
                  the KDBX3 file is kept as a .bak next to it."
-            )?;
-        } else {
-            writeln!(out, "Already KDBX4; nothing to do.")?;
+            )?,
         }
         Ok(())
     }
