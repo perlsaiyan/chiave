@@ -2,3 +2,4 @@
 *.kdbx.bak
 *.lock.kdbx
 /scratch/
+/.tools/

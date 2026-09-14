@@ -12,3 +12,14 @@ thiserror.workspace = true
 zeroize.workspace = true
 secrecy.workspace = true
 keepass = { version = "0.13", features = ["save_kdbx4", "totp"] }
+chrono = "0.4"
+uuid = "1"
+
+[features]
+default = []
+# Builders for sample vaults used by the tests of every crate in the workspace.
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+chiave-core = { path = ".", features = ["test-support"] }

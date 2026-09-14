@@ -9,3 +9,5 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 thiserror.workspace = true
+secrecy.workspace = true
+zeroize.workspace = true

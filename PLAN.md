@@ -87,6 +87,9 @@ Key design rules:
   (after a backup). KDBX 2.x files do not open at all; point users at KeePassXC.
 - keepass-rs does not verify the KDBX3 header hash (BrokenHeaderHash.kdbx
   opens). Add the check in chiave-core when reading KDBX3.
+- keepass-rs `Database::new()` defaults to Argon2d with 50 rounds and 1 MB of
+  memory (keepassxc-cli db-info confirms). `newdb` must set KeePassXC-grade
+  parameters (Argon2id, 64 MB, 10+ iterations, tuned to ~1s) before saving.
 - Watch keepass-rs issues #360 (attachments dangling in history) and #336
   (merge drops attachments). Add regression tests for both before shipping
   attachment edits.
