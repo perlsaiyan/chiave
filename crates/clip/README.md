@@ -300,13 +300,21 @@ Verified there:
   is used with default features, so `wayland-backend` is the pure-Rust client
   (the `native_lib`/`dlopen` features that link `libwayland-client.so` are off).
 
-**Not verified** — no Wayland session was available:
+Verified on omarchy quattro (Hyprland, 2026-09-14) with a release build:
 
-- The native `wl-clipboard-rs` code path against a real compositor: that the
-  six-MIME `copy_multi` offer appears as expected in `wl-paste --list-types`,
-  that cliphist/Klipper/quattro actually skip it, that `paste::get_contents`
-  read-back and `copy::clear` behave as assumed, and that the serving thread
-  holds the selection for the helper's lifetime.
+- `detect()` picked the native `wayland` backend.
+- `chiave --command 'xp "/Sample Entry"'` returned immediately; afterwards
+  `wl-paste --list-types` listed the five text types plus
+  `x-kde-passwordManagerHint`, and `wl-paste` printed the secret. So the
+  detached helper held the selection after the caller exited and the
+  `copy_multi` offer set is what a real compositor exposes.
+- After the 10 s timeout `wl-paste` reported "Nothing is copied": the helper's
+  read-back, compare and `copy::clear` path works.
+
+**Not verified yet:**
+
+- That the quattro clipboard-history plugin, cliphist and Klipper actually
+  skip the entry (check the history UI after an `xp`).
 - The `is_protocol_missing` → `wl-copy` fallback trigger: the string matching
   against `wl-clipboard-rs`' `MissingProtocol`/`NoSeats` error text was checked
   against the crate source, not against a live GNOME session.
@@ -317,5 +325,4 @@ Verified there:
   an observed run.
 - `xclip -loops 1` and `wl-copy --paste-once` semantics.
 
-Work through the "Verifying on omarchy" list on the target machine before
-trusting the Wayland path.
+The remaining items in "Verifying on omarchy" are the history-manager checks.
