@@ -75,3 +75,30 @@ fn an_unknown_parent_group_yields_nothing() {
     let (_, items) = at_end(&h, "show /Nowhere/x");
     assert!(items.is_empty());
 }
+
+#[test]
+fn mv_and_cp_complete_an_entry_then_a_group() {
+    let h = common::harness();
+    // First argument: anything.
+    let (_, items) = at_end(&h, "mv /Sam");
+    assert_eq!(items, ["'/Sample Entry'"]);
+    // Second argument: destination groups only.
+    let (_, items) = at_end(&h, "mv '/Sample Entry' ");
+    assert_eq!(items, ["Empty/", "Internet/", "'Recycle Bin/'", "Work/"]);
+    let (_, items) = at_end(&h, "cp '/Sample Entry' /Inte");
+    assert_eq!(items, ["/Internet/"]);
+    let (_, items) = at_end(&h, "clone '/Sample Entry' /");
+    assert!(!items.iter().any(|i| i.contains("Sample")), "{items:?}");
+}
+
+#[test]
+fn group_commands_complete_groups_only() {
+    let h = common::harness();
+    let (_, items) = at_end(&h, "rmdir /");
+    assert_eq!(
+        items,
+        ["/Empty/", "/Internet/", "'/Recycle Bin/'", "/Work/"]
+    );
+    let (_, items) = at_end(&h, "rename /Inte");
+    assert_eq!(items, ["/Internet/"]);
+}

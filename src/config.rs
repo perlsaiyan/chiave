@@ -20,6 +20,8 @@ pub struct Config {
     pub timeout: Option<u64>,
     /// REPL history file; `/dev/null` disables it.
     pub histfile: Option<PathBuf>,
+    /// Word list used to generate passphrases.
+    pub pwwords: Option<PathBuf>,
 }
 
 /// The directory holding chiave's configuration.
@@ -56,6 +58,7 @@ pub fn load_from(path: &Path) -> anyhow::Result<Config> {
     cfg.database = cfg.database.map(|p| expand_tilde(&p));
     cfg.keyfile = cfg.keyfile.map(|p| expand_tilde(&p));
     cfg.histfile = cfg.histfile.map(|p| expand_tilde(&p));
+    cfg.pwwords = cfg.pwwords.map(|p| expand_tilde(&p));
     Ok(cfg)
 }
 
@@ -81,7 +84,7 @@ mod tests {
         let path = dir.join("config.toml");
         std::fs::write(
             &path,
-            "database = \"/tmp/v.kdbx\"\nkeyfile = \"/tmp/v.key\"\nclip_timeout = 20\ntimeout = 300\nhistfile = \"/dev/null\"\n",
+            "database = \"/tmp/v.kdbx\"\nkeyfile = \"/tmp/v.key\"\nclip_timeout = 20\ntimeout = 300\nhistfile = \"/dev/null\"\npwwords = \"/tmp/words.txt\"\n",
         )
         .expect("write config");
         let cfg = load_from(&path).expect("load");
@@ -90,6 +93,7 @@ mod tests {
         assert_eq!(cfg.clip_timeout, Some(20));
         assert_eq!(cfg.timeout, Some(300));
         assert_eq!(cfg.histfile.as_deref(), Some(Path::new("/dev/null")));
+        assert_eq!(cfg.pwwords.as_deref(), Some(Path::new("/tmp/words.txt")));
         let _ = std::fs::remove_file(&path);
     }
 

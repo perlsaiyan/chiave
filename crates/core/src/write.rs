@@ -179,6 +179,11 @@ fn value_text(v: &FieldValue) -> &str {
 }
 
 /// Split "a/b/Name" into the parent group spec and the unescaped final name.
+/// The parent spec is empty when the name has no directory part.
+pub fn split_spec(spec: &str) -> Result<(String, String), WriteError> {
+    split_new(spec)
+}
+
 fn split_new(spec: &str) -> Result<(String, String), WriteError> {
     let (parent, last) = path::split_for_completion(spec.trim_end_matches('/'));
     let name = match path::parse(last).as_slice() {
@@ -346,6 +351,16 @@ impl Vault {
         } else {
             e.title.clone()
         };
+        self.new_entry_in(parent, NewEntry { title, ..e })
+    }
+
+    /// Create an entry directly in `parent` using `e.title` as the title.
+    pub fn new_entry_in(&mut self, parent: GroupId, e: NewEntry) -> Result<EntryId, WriteError> {
+        self.ensure_writable()?;
+        if e.title.is_empty() {
+            return Err(WriteError::BadName(String::new()));
+        }
+        let title = e.title.clone();
         let mut pg = self.db.group_mut(parent).ok_or(WriteError::Gone)?;
         let id = pg
             .add_entry()

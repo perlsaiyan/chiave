@@ -3,7 +3,7 @@
 
 mod config;
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -64,6 +64,14 @@ struct Cli {
     #[arg(long = "no-clip")]
     no_clip: bool,
 
+    /// Word list for passphrase generation (`w` at a password prompt, `pwgen --words`)
+    #[arg(long = "pwwords", value_name = "FILE")]
+    pwwords: Option<PathBuf>,
+
+    /// Do not save automatically after a one-shot command that changed the database
+    #[arg(long = "no-save")]
+    no_save: bool,
+
     /// Database to open, kpcli style
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
@@ -74,7 +82,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Action {
-    /// Start the interactive shell (the default)
+    /// Full-screen browser (the default when a database is configured)
+    Tui,
+    /// kpcli-style interactive shell
     Shell,
     #[command(flatten)]
     Run(chiave_shell::Command),
@@ -114,11 +124,47 @@ fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(2));
     };
 
-    let creds = credentials(&cli, &database, keyfile)?;
+    let creds = credentials(&cli, &database, keyfile.clone())?;
     let vault = Vault::open(&database, &creds, cli.readonly)
         .with_context(|| format!("opening {}", database.display()))?;
-    let shell = Shell::with_vault(vault, clipboard(&cli), opts);
+    if wants_tui(&cli) {
+        return run_tui(vault, &cli, &opts);
+    }
+    let mut shell = Shell::with_vault(vault, clipboard(&cli), opts);
+    shell.set_keyfile(keyfile);
     start(shell, &cli, Some(&database))
+}
+
+/// `chiave tui`, or bare `chiave` on a terminal with no --command batch.
+fn wants_tui(cli: &Cli) -> bool {
+    match cli.action {
+        Some(Action::Tui) => true,
+        None => {
+            cli.command.is_empty()
+                && std::io::stdin().is_terminal()
+                && std::io::stdout().is_terminal()
+        }
+        _ => false,
+    }
+}
+
+fn run_tui(vault: Vault, cli: &Cli, opts: &ShellOptions) -> anyhow::Result<ExitCode> {
+    let tui_opts = chiave_tui::TuiOptions {
+        clip_timeout: opts.clip_timeout,
+        idle_lock: opts.timeout,
+        read_only: cli.readonly,
+    };
+    chiave_tui::run(vault, clipboard(cli), tui_opts, Box::new(TtyPrompt))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Adapts the shell's rpassword prompt to the TUI's prompt trait.
+struct TtyPrompt;
+
+impl chiave_tui::PasswordPrompt for TtyPrompt {
+    fn prompt(&self, msg: &str) -> std::io::Result<SecretString> {
+        chiave_shell::prompt::PasswordPrompt::prompt(&RpasswordPrompt, msg)
+    }
 }
 
 /// Run whatever mode the flags asked for.
@@ -133,7 +179,7 @@ fn start(mut shell: Shell, cli: &Cli, database: Option<&Path>) -> anyhow::Result
     }
 
     match &cli.action {
-        None | Some(Action::Shell) => {
+        None | Some(Action::Shell) | Some(Action::Tui) => {
             if database.is_none() {
                 println!("No database configured. Use `open <file.kdbx>` to open one.");
             }
@@ -145,7 +191,17 @@ fn start(mut shell: Shell, cli: &Cli, database: Option<&Path>) -> anyhow::Result
                 anyhow::bail!(chiave_shell::ShellError::OpenNotAvailable);
             }
             let mut out = std::io::stdout().lock();
-            let result = shell.exec(command.clone(), &mut out);
+            let result = shell
+                .exec(command.clone(), &mut out)
+                // There is no later `save` in one-shot mode, so a command that
+                // changed something writes the database before we exit.
+                .and_then(|flow| {
+                    if cli.no_save {
+                        Ok(flow)
+                    } else {
+                        shell.auto_save(&mut out).map(|_| flow)
+                    }
+                });
             out.flush()?;
             match result {
                 Ok(_) => Ok(ExitCode::SUCCESS),
@@ -168,6 +224,7 @@ fn shell_options(cli: &Cli, cfg: &config::Config) -> ShellOptions {
         histfile: cli.histfile.clone().or_else(|| cfg.histfile.clone()),
         xpx_secs: if clip_timeout > 0 { clip_timeout } else { 10 },
         read_only: cli.readonly,
+        pwwords: cli.pwwords.clone().or_else(|| cfg.pwwords.clone()),
     }
 }
 

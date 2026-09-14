@@ -12,9 +12,12 @@ pub mod format;
 pub mod prompt;
 pub mod repl;
 pub mod shell;
+pub mod write;
 
 pub use command::{command_names, help_all, help_for, parse_line, Command, ParseLineError};
 pub use complete::complete;
-pub use prompt::{FixedPrompt, PasswordPrompt, RpasswordPrompt};
+pub use prompt::{
+    FixedPrompt, LinePrompt, PasswordPrompt, RpasswordPrompt, ScriptedPrompt, StdinPrompt,
+};
 pub use repl::repl;
 pub use shell::{default_histfile, run_commands, Flow, Shell, ShellError, ShellOptions};

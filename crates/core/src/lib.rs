@@ -22,7 +22,7 @@ pub use vault::{
     is_expired, DiskState, EntryRow, EntryView, FieldValue, FindHit, FindOptions, GroupRow,
     Listing, LockedVault, NodeId, OtpCode, ResolveError, Stats, Vault, VaultError,
 };
-pub use write::{EntryPatch, NewEntry, SaveError, SaveOptions, SaveReport, WriteError};
+pub use write::{split_spec, EntryPatch, NewEntry, SaveError, SaveOptions, SaveReport, WriteError};
 
 /// One row of a recursive listing: a slash-separated path and whether it is a group.
 #[derive(Debug, Clone, PartialEq, Eq)]

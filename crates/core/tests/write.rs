@@ -555,3 +555,24 @@ fn shared_binary_survives_removal_from_one_entry() {
     // history: one snapshot from KeePassXC's import, one from chiave's removal
     assert_eq!(r.entry(web).unwrap().history_count, 2);
 }
+
+#[test]
+fn accessors_for_front_ends() {
+    let (_d, v) = open();
+    assert!(v.keyfile().is_none());
+    let e = v.resolve_entry("/Work/Servers/web01").unwrap();
+    let g = v.resolve_group("/Work/Servers").unwrap();
+    assert_eq!(v.entry_parent(e), Some(g));
+    assert_eq!(
+        chiave_core::split_spec("/a/b/Name").unwrap(),
+        ("/a/b/".to_string(), "Name".to_string())
+    );
+    assert_eq!(
+        chiave_core::split_spec("Name").unwrap(),
+        (String::new(), "Name".to_string())
+    );
+    assert_eq!(
+        chiave_core::split_spec(r"x/Sl\/ash").unwrap(),
+        ("x/".to_string(), "Sl/ash".to_string())
+    );
+}

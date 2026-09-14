@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::command::{self, Command};
 use crate::format;
-use crate::prompt::{PasswordPrompt, RpasswordPrompt};
+use crate::prompt::{LinePrompt, PasswordPrompt, RpasswordPrompt, StdinPrompt};
 
 /// What the caller should do after a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,10 @@ pub enum ShellError {
     NoSuchField(String),
     #[error("unknown command: {0}")]
     UnknownCommand(String),
+    #[error("Unsaved changes; run save, or quit --force / close --force to discard")]
+    UnsavedChanges,
+    #[error("{0}")]
+    Refused(String),
 }
 
 /// Tunables shared by every front end.
@@ -48,6 +52,8 @@ pub struct ShellOptions {
     pub xpx_secs: u64,
     /// Open databases read-only.
     pub read_only: bool,
+    /// Word list for passphrase generation (`w` at a password prompt, `pwgen --words`).
+    pub pwwords: Option<PathBuf>,
 }
 
 impl Default for ShellOptions {
@@ -58,6 +64,7 @@ impl Default for ShellOptions {
             histfile: None,
             xpx_secs: 10,
             read_only: false,
+            pwwords: None,
         }
     }
 }
@@ -74,11 +81,14 @@ pub fn default_histfile() -> Option<PathBuf> {
 
 /// An open (or locked) vault plus everything the command table needs.
 pub struct Shell {
-    vault: Option<Vault>,
-    locked: Option<LockedVault>,
-    clip: Box<dyn Clipboard>,
-    opts: ShellOptions,
-    prompt: Box<dyn PasswordPrompt>,
+    pub(crate) vault: Option<Vault>,
+    pub(crate) locked: Option<LockedVault>,
+    pub(crate) clip: Box<dyn Clipboard>,
+    pub(crate) opts: ShellOptions,
+    pub(crate) prompt: Box<dyn PasswordPrompt>,
+    pub(crate) line: Box<dyn LinePrompt>,
+    /// Key file that goes with the open database; `passwd` keeps it.
+    pub(crate) keyfile: Option<PathBuf>,
     last_activity: Instant,
     history: Vec<String>,
     /// Group to return to after an idle unlock.
@@ -94,6 +104,8 @@ impl Shell {
             clip,
             opts,
             prompt: Box::new(RpasswordPrompt),
+            line: Box::new(StdinPrompt),
+            keyfile: None,
             last_activity: Instant::now(),
             history: Vec::new(),
             resume_path: None,
@@ -107,9 +119,25 @@ impl Shell {
         s
     }
 
-    /// Replace the master-password prompt (tests use [`crate::FixedPrompt`]).
+    /// Replace the masked prompt (tests use [`crate::FixedPrompt`] or
+    /// [`crate::ScriptedPrompt`]).
     pub fn set_prompt(&mut self, prompt: Box<dyn PasswordPrompt>) {
         self.prompt = prompt;
+    }
+
+    /// Replace the echoed prompt used by `new`, `edit` and confirmations.
+    pub fn set_line_prompt(&mut self, prompt: Box<dyn LinePrompt>) {
+        self.line = prompt;
+    }
+
+    /// Remember the key file that unlocks the open database, so `passwd` keeps it.
+    pub fn set_keyfile(&mut self, keyfile: Option<PathBuf>) {
+        self.keyfile = keyfile;
+    }
+
+    /// True when the open database has changes that are not on disk yet.
+    pub fn is_dirty(&self) -> bool {
+        self.vault.as_ref().is_some_and(Vault::has_unsaved_changes)
     }
 
     pub fn options(&self) -> &ShellOptions {
@@ -145,7 +173,10 @@ impl Shell {
     /// The REPL prompt for the current state.
     pub fn prompt_string(&self) -> String {
         match (&self.vault, &self.locked) {
-            (Some(v), _) => format!("chiave:{}> ", v.cwd_path()),
+            (Some(v), _) => {
+                let dirty = if v.has_unsaved_changes() { "*" } else { "" };
+                format!("chiave:{}{dirty}> ", v.cwd_path())
+            }
             (None, Some(_)) => "chiave:[locked]> ".to_string(),
             (None, None) => "chiave> ".to_string(),
         }
@@ -209,6 +240,13 @@ impl Shell {
         if self.vault.is_none() || self.last_activity.elapsed() < timeout {
             return Ok(());
         }
+        if self.is_dirty() {
+            writeln!(
+                out,
+                "Idle for too long, but there are unsaved changes; the database stays unlocked. Run `save` (or `close --force` to discard)."
+            )?;
+            return Ok(());
+        }
         self.lock_now();
         writeln!(out, "Idle for too long; the database has been locked.")?;
         Ok(())
@@ -242,7 +280,7 @@ impl Shell {
         Ok(())
     }
 
-    fn need_vault(&mut self) -> Result<&mut Vault, ShellError> {
+    pub(crate) fn need_vault(&mut self) -> Result<&mut Vault, ShellError> {
         self.vault.as_mut().ok_or(ShellError::NoDatabase)
     }
 
@@ -251,7 +289,7 @@ impl Shell {
     fn dispatch(&mut self, cmd: Command, out: &mut dyn Write) -> anyhow::Result<Flow> {
         match cmd {
             Command::Open { file, keyfile } => self.cmd_open(&file, keyfile.as_deref(), out)?,
-            Command::Close => self.cmd_close(out)?,
+            Command::Close { force } => self.cmd_close(force, out)?,
             Command::Ls { paths } => self.cmd_ls(&paths, out)?,
             Command::Cd { path } => self.cmd_cd(path.as_deref().unwrap_or("/"), out)?,
             Command::Cl { path } => {
@@ -291,7 +329,83 @@ impl Shell {
                 writeln!(out, "Locked.")?;
             }
             Command::Help { cmd } => self.cmd_help(cmd.as_deref(), out)?,
-            Command::Quit => return Ok(Flow::Quit),
+            Command::Mkdir { path } => self.cmd_mkdir(&path, out)?,
+            Command::Rmdir {
+                recursive,
+                permanent,
+                path,
+            } => self.cmd_rmdir(&path, recursive, permanent, out)?,
+            Command::Rename { path, new_name } => self.cmd_rename(&path, &new_name, out)?,
+            Command::New {
+                title,
+                user,
+                url,
+                notes,
+                password_from_stdin,
+                generate,
+                length,
+                no_special,
+                path,
+            } => self.cmd_new(
+                crate::write::NewArgs {
+                    title,
+                    user,
+                    url,
+                    notes,
+                    password_from_stdin,
+                    generate,
+                    length,
+                    no_special,
+                    path,
+                },
+                out,
+            )?,
+            Command::Edit { spec } => self.cmd_edit(&spec, out)?,
+            Command::Set {
+                spec,
+                field,
+                value,
+                delete,
+            } => self.cmd_set(&spec, &field, value.as_deref(), delete, out)?,
+            Command::Rm {
+                permanent,
+                force,
+                spec,
+            } => self.cmd_rm(&spec, permanent, force, out)?,
+            Command::Mv { spec, dest } => self.cmd_mv(&spec, &dest, out)?,
+            Command::Cp { spec, dest } => self.cmd_cp(&spec, &dest, false, out)?,
+            Command::Clone { spec, dest } => self.cmd_cp(&spec, &dest, true, out)?,
+            Command::Attach {
+                spec,
+                add,
+                name,
+                export,
+                rm,
+            } => self.cmd_attach(
+                &spec,
+                add.as_deref(),
+                name.as_deref(),
+                export,
+                rm.as_deref(),
+                out,
+            )?,
+            Command::Save { force } => self.cmd_save(force, out)?,
+            Command::Saveas { file } => self.cmd_saveas(&file, out)?,
+            Command::Passwd => self.cmd_passwd(out)?,
+            Command::Newdb { file } => self.cmd_newdb(&file, out)?,
+            Command::Upgrade => self.cmd_upgrade(out)?,
+            Command::Pwgen {
+                length,
+                words,
+                no_special,
+                count,
+            } => self.cmd_pwgen(length, words, no_special, count, out)?,
+            Command::Quit { force } => {
+                if !force && self.is_dirty() {
+                    anyhow::bail!(ShellError::UnsavedChanges);
+                }
+                return Ok(Flow::Quit);
+            }
         }
         Ok(Flow::Continue)
     }
@@ -304,6 +418,10 @@ impl Shell {
         keyfile: Option<&Path>,
         out: &mut dyn Write,
     ) -> anyhow::Result<()> {
+        // Opening a second database drops the first one; never do that silently.
+        if self.is_dirty() {
+            anyhow::bail!(ShellError::UnsavedChanges);
+        }
         let msg = format!("Master password for {}: ", file.display());
         let password = self.prompt.prompt(&msg)?;
         let password = if password.expose_secret().is_empty() && keyfile.is_some() {
@@ -316,6 +434,7 @@ impl Shell {
             keyfile: keyfile.map(Path::to_path_buf),
         };
         let vault = Vault::open(file, &creds, self.opts.read_only)?;
+        self.keyfile = keyfile.map(Path::to_path_buf);
         self.locked = None;
         self.resume_path = None;
         self.vault = Some(vault);
@@ -323,8 +442,12 @@ impl Shell {
         Ok(())
     }
 
-    fn cmd_close(&mut self, out: &mut dyn Write) -> anyhow::Result<()> {
+    fn cmd_close(&mut self, force: bool, out: &mut dyn Write) -> anyhow::Result<()> {
+        if !force && self.is_dirty() {
+            anyhow::bail!(ShellError::UnsavedChanges);
+        }
         let had = self.vault.is_some() || self.locked.is_some();
+        self.keyfile = None;
         self.vault = None;
         self.locked = None;
         self.resume_path = None;
@@ -581,6 +704,16 @@ impl Shell {
             },
         }
         Ok(())
+    }
+
+    /// One-shot mode has no later `save`, so a mutating command writes the
+    /// database itself. Does nothing when there is nothing to write.
+    pub fn auto_save(&mut self, out: &mut dyn Write) -> anyhow::Result<bool> {
+        if !self.is_dirty() {
+            return Ok(false);
+        }
+        self.cmd_save(false, out)?;
+        Ok(true)
     }
 }
 

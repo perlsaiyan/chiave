@@ -19,7 +19,11 @@ pub enum Command {
         keyfile: Option<PathBuf>,
     },
     /// Close the database and forget it
-    Close,
+    Close {
+        /// Discard unsaved changes
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
     /// List groups and entries
     #[command(alias = "dir")]
     Ls {
@@ -103,6 +107,160 @@ pub enum Command {
     },
     /// Lock the database, keeping it open for a later unlock
     Lock,
+    /// Create a group
+    Mkdir {
+        /// New group path; the last component is the new name
+        path: String,
+    },
+    /// Remove a group (to the recycle bin unless --permanent)
+    Rmdir {
+        /// Remove the group even when it still holds entries or groups
+        #[arg(short = 'r', long = "recursive")]
+        recursive: bool,
+        /// Delete outright instead of moving to the recycle bin
+        #[arg(long = "permanent")]
+        permanent: bool,
+        /// Group to remove
+        path: String,
+    },
+    /// Rename a group
+    Rename {
+        /// Group to rename
+        path: String,
+        /// New name (not a path)
+        new_name: String,
+    },
+    /// Create an entry, asking for each field
+    New {
+        /// Title, skipping the Title prompt
+        #[arg(long)]
+        title: Option<String>,
+        /// Username, skipping the Username prompt
+        #[arg(long = "user", alias = "username", value_name = "NAME")]
+        user: Option<String>,
+        /// URL, skipping the URL prompt
+        #[arg(long)]
+        url: Option<String>,
+        /// Notes, skipping the Notes prompt (`\n` becomes a newline)
+        #[arg(long)]
+        notes: Option<String>,
+        /// Read the password from the first line of stdin
+        #[arg(long = "password-from-stdin", conflicts_with = "generate")]
+        password_from_stdin: bool,
+        /// Generate the password instead of asking for one
+        #[arg(long)]
+        generate: bool,
+        /// Length of the generated password
+        #[arg(long, value_name = "N")]
+        length: Option<usize>,
+        /// Leave special characters out of the generated password
+        #[arg(long = "no-special")]
+        no_special: bool,
+        /// Where to put the entry: a path whose last component is the title
+        path: Option<String>,
+    },
+    /// Edit an entry, field by field
+    Edit {
+        /// Entry path, title or number from the last listing
+        spec: String,
+    },
+    /// Set one field of an entry
+    Set {
+        /// Entry path, title or number from the last listing
+        spec: String,
+        /// Field name, `expires`, or the name of a custom field
+        field: String,
+        /// New value; omitted means "ask for it"
+        value: Option<String>,
+        /// Remove the field instead of setting it
+        #[arg(long = "delete", conflicts_with = "value")]
+        delete: bool,
+    },
+    /// Remove an entry (to the recycle bin unless --permanent)
+    Rm {
+        /// Delete outright instead of moving to the recycle bin
+        #[arg(long = "permanent")]
+        permanent: bool,
+        /// Do not ask for confirmation
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+        /// Entry path, title or number from the last listing
+        spec: String,
+    },
+    /// Move an entry or group into another group
+    Mv {
+        /// Entry or group to move
+        spec: String,
+        /// Destination group
+        dest: String,
+    },
+    /// Copy an entry
+    #[command(alias = "copy")]
+    Cp {
+        /// Entry to copy
+        spec: String,
+        /// Destination group, or group/NewTitle
+        dest: String,
+    },
+    /// Copy an entry and edit the copy
+    Clone {
+        /// Entry to copy
+        spec: String,
+        /// Destination group, or group/NewTitle
+        dest: String,
+    },
+    /// List, add, export or remove an entry's attachments
+    Attach {
+        /// Entry path, title or number from the last listing
+        spec: String,
+        /// Attach this file
+        #[arg(long = "add", value_name = "FILE")]
+        add: Option<PathBuf>,
+        /// Name to store the added file under (default: its file name)
+        #[arg(long = "name", value_name = "NAME", requires = "add")]
+        name: Option<String>,
+        /// Write an attachment out to a file
+        #[arg(long = "export", num_args = 2, value_names = ["NAME", "FILE"])]
+        export: Option<Vec<String>>,
+        /// Remove an attachment
+        #[arg(long = "rm", value_name = "NAME")]
+        rm: Option<String>,
+    },
+    /// Write the database back to its file
+    Save {
+        /// Save even if the file changed on disk since it was opened
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
+    /// Write the database to a new file, which becomes the current one
+    Saveas {
+        /// Destination file
+        file: PathBuf,
+    },
+    /// Change the master password (takes effect on the next save)
+    Passwd,
+    /// Create a new database and switch to it
+    Newdb {
+        /// File to create
+        file: PathBuf,
+    },
+    /// Convert a KDBX3 database to KDBX4 (takes effect on the next save)
+    Upgrade,
+    /// Generate passwords and print them
+    Pwgen {
+        /// Password length
+        #[arg(long, value_name = "N")]
+        length: Option<usize>,
+        /// Generate a passphrase of this many words instead
+        #[arg(long, value_name = "N")]
+        words: Option<usize>,
+        /// Leave special characters out
+        #[arg(long = "no-special")]
+        no_special: bool,
+        /// How many to print
+        #[arg(long, value_name = "N", default_value_t = 1)]
+        count: usize,
+    },
     /// Show help for all commands or one command
     Help {
         /// Command to describe
@@ -110,7 +268,11 @@ pub enum Command {
     },
     /// Leave the shell
     #[command(alias = "exit")]
-    Quit,
+    Quit {
+        /// Discard unsaved changes
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
 }
 
 /// One typed REPL line: clap in multicall mode, so `argv[0]` is the command name.
@@ -131,12 +293,14 @@ pub fn is_lock_exempt(cmd: &Command) -> bool {
         cmd,
         Command::Help { .. }
             | Command::Ver
-            | Command::Quit
+            | Command::Quit { .. }
             | Command::Cls
             | Command::History { .. }
             | Command::Lock
-            | Command::Close
+            | Command::Close { .. }
             | Command::Open { .. }
+            | Command::Pwgen { .. }
+            | Command::Newdb { .. }
     )
 }
 
@@ -148,6 +312,9 @@ fn normalize(words: Vec<String>) -> Vec<String> {
             "-expired" => "--expired".to_string(),
             "-full" => "--full".to_string(),
             "-all" => "--all".to_string(),
+            "-force" => "--force".to_string(),
+            "-permanent" => "--permanent".to_string(),
+            "-delete" => "--delete".to_string(),
             _ => w,
         })
         .collect()
@@ -254,7 +421,22 @@ mod tests {
                 query: "git".into()
             })
         );
-        assert_eq!(parse_line("exit").unwrap(), Some(Command::Quit));
+        assert_eq!(
+            parse_line("exit").unwrap(),
+            Some(Command::Quit { force: false })
+        );
+        assert_eq!(
+            parse_line("quit --force").unwrap(),
+            Some(Command::Quit { force: true })
+        );
+        assert_eq!(
+            parse_line("rmdir -r --permanent /Old").unwrap(),
+            Some(Command::Rmdir {
+                recursive: true,
+                permanent: true,
+                path: "/Old".into()
+            })
+        );
         assert_eq!(parse_line("   ").unwrap(), None);
     }
 
@@ -275,5 +457,11 @@ mod tests {
         assert!(names.contains(&"dir".to_string()));
         assert!(names.contains(&"chdir".to_string()));
         assert!(names.contains(&"version".to_string()));
+        for n in [
+            "mkdir", "rmdir", "rename", "new", "edit", "set", "rm", "mv", "cp", "copy", "clone",
+            "attach", "save", "saveas", "passwd", "newdb", "upgrade", "pwgen",
+        ] {
+            assert!(names.contains(&n.to_string()), "missing {n}");
+        }
     }
 }

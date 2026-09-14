@@ -43,6 +43,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 zeroize.workspace = true
 
+[dev-dependencies]
+chiave-core = { path = "crates/core", features = ["test-support"] }
+tempfile = "3"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -104,6 +104,7 @@ pub enum FieldValue {
 pub struct EntryView {
     pub id: EntryId,
     pub uuid: Uuid,
+    pub group: GroupId,
     pub path: String,
     pub title: String,
     pub username: Option<String>,
@@ -246,6 +247,16 @@ impl Vault {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Key file currently used to unlock this vault, if any.
+    pub fn keyfile(&self) -> Option<&Path> {
+        self.keyfile.as_deref()
+    }
+
+    /// Parent group of an entry.
+    pub fn entry_parent(&self, id: EntryId) -> Option<GroupId> {
+        self.db.entry(id).map(|e| e.parent().id())
     }
 
     pub fn version(&self) -> DatabaseVersion {
@@ -620,6 +631,7 @@ impl Vault {
         Ok(EntryView {
             id,
             uuid: id.uuid(),
+            group: e.parent().id(),
             path: self.entry_path(id),
             title: e.get_title().unwrap_or("").to_string(),
             username: e

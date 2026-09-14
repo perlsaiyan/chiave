@@ -6,8 +6,16 @@ use chiave_core::Vault;
 use crate::command::command_names;
 use crate::shell::Shell;
 
-/// Commands whose argument can only be a group.
-const GROUP_ONLY: &[&str] = &["cd", "chdir", "ls", "dir", "cl"];
+/// Commands whose arguments can only be groups.
+const GROUP_ONLY: &[&str] = &["cd", "chdir", "ls", "dir", "cl", "mkdir", "rmdir", "rename"];
+
+/// Commands whose *second* argument is a destination group.
+const GROUP_DEST: &[&str] = &["mv", "cp", "copy", "clone"];
+
+/// Should the word at `argno` (1 for the first argument) only offer groups?
+fn groups_only(verb: &str, argno: usize) -> bool {
+    GROUP_ONLY.contains(&verb) || (GROUP_DEST.contains(&verb) && argno >= 2)
+}
 
 /// Complete `line[..pos]`. Returns the byte offset where the replacement starts
 /// and the candidates, already quoted for [`shell_words`].
@@ -29,9 +37,11 @@ pub fn complete(shell: &Shell, line: &str, pos: usize) -> (usize, Vec<String>) {
     let Some(vault) = shell.vault() else {
         return (start, Vec::new());
     };
-    let verb = before.split_whitespace().next().unwrap_or("");
-    let groups_only = GROUP_ONLY.contains(&verb);
-    (start, paths(vault, word, groups_only))
+    let mut words = before.split_whitespace();
+    let verb = words.next().unwrap_or("");
+    // The word being completed comes after everything in `before`.
+    let argno = words.count() + 1;
+    (start, paths(vault, word, groups_only(verb, argno)))
 }
 
 /// Candidate paths for a partially typed spec.
@@ -160,6 +170,16 @@ mod tests {
         assert_eq!(word_start("ls "), 3);
         assert_eq!(word_start("show '/Sample En"), 5);
         assert_eq!(word_start(r#"show "a b"#), 5);
+    }
+
+    #[test]
+    fn destination_arguments_are_groups_only() {
+        assert!(groups_only("cd", 1));
+        assert!(groups_only("rmdir", 1));
+        assert!(!groups_only("mv", 1));
+        assert!(groups_only("mv", 2));
+        assert!(groups_only("clone", 2));
+        assert!(!groups_only("show", 1));
     }
 
     #[test]
