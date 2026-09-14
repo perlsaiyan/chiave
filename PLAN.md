@@ -121,15 +121,15 @@ generator flags. Add: --tui, --shell, --clip-timeout, --no-clip-hint.
 
 ## 6. Phases
 
-Progress (2026-09-14): phases 0 and 1 done (core, read-only shell, one-shot
-CLI, config, clipboard backends with detached auto-clear helper). Phase 2
-core done: mutations with history, recycle bin, attachments, atomic verified
-save with backup and external-change detection, `create` with strong KDF,
-`upgrade` for KDBX3, password generator, two-way keepassxc-cli oracle tests.
-keepass-rs is vendored with attachment-reference fixes (see
-vendor/keepass-rs/CHIAVE-PATCHES.md). Remaining for phase 2: shell write
-commands (new, edit, set, rm, mkdir, rmdir, mv, cp, rename, save, saveas,
-newdb, passwd, attach, upgrade), pwck, purge. Then phase 3 TUI.
+Progress (2026-09-14): phases 0 to 3 built. Core (read, write with history,
+recycle bin, attachments, atomic verified save, create, upgrade, generator,
+pwck, purge), kpcli shell with read and write commands, one-shot CLI with
+auto-save, clipboard backends verified on omarchy quattro, ratatui TUI
+(tree, entries, detail, search, copy, edit forms, lock), omarchy contrib
+files and AUR PKGBUILD. keepass-rs is vendored with attachment-reference
+fixes (vendor/keepass-rs/CHIAVE-PATCHES.md). Not yet: TUI editing of
+attachments, tags and OTP secrets; TUI history view; pwck/purge shell
+commands; KDBX3 header-hash check; phase 5 items.
 
 0. Bootstrap (half a day): pick name, `cargo new --workspace`, rustup on the
    Ubuntu dev box, CI, fetch KeePassXC fixtures, write a throwaway KDBX4 vault

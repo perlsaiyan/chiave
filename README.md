@@ -3,24 +3,24 @@
 *chiave* (Italian: key) is a KeePass KDBX shell and TUI for the terminal, a
 compiled successor to the Perl tool kpcli. One binary, three modes:
 
+- `chiave` — full-screen TUI (tree, entries, detail, search, copy, edit)
 - `chiave shell` — kpcli-compatible interactive shell (`ls`, `cd`, `show`, `xp`, `find`, `new`, `edit` ...)
-- `chiave <command>` — one-shot subcommands for scripting
-- `chiave` — full-screen TUI
+- `chiave <command>` — one-shot subcommands for scripting, with auto-save
 
 Written in Rust on top of [keepass-rs](https://github.com/sseemayer/keepass-rs).
 Designed to replace 1Password on [omarchy](https://omarchy.org), with KeePassXC
 as the companion for browser and SSH-agent integration.
 
-Status: phase 1 complete (read-only shell, one-shot CLI, clipboard); the
-core write path is done and the write commands and TUI are next. See
-[PLAN.md](PLAN.md).
+Status: usable. Shell, one-shot CLI, TUI and clipboard all work; the TUI
+cannot yet edit attachments, tags or OTP secrets. See [PLAN.md](PLAN.md).
 
 ## Quick start
 
 ```sh
 cargo build --release
+target/release/chiave --kdb ~/vault.kdbx               # TUI
+target/release/chiave --kdb ~/vault.kdbx shell         # interactive shell
 target/release/chiave --kdb ~/vault.kdbx ls            # one-shot
-target/release/chiave --kdb ~/vault.kdbx               # interactive shell
 target/release/chiave --kdb ~/vault.kdbx --command "find github" --command "xp 1"
 ```
 

@@ -9,3 +9,14 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 thiserror.workspace = true
+secrecy.workspace = true
+chiave-core.workspace = true
+chiave-clip.workspace = true
+ratatui = "0.30"
+crossterm = "0.29"
+chrono = "0.4"
+unicode-width = "0.2"
+
+[dev-dependencies]
+chiave-core = { path = "../core", features = ["test-support"] }
+tempfile = "3"
