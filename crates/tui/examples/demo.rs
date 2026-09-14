@@ -29,6 +29,7 @@ fn main() -> anyhow::Result<()> {
         clip_timeout: Some(Duration::from_secs(10)),
         idle_lock: Some(Duration::from_secs(60)),
         read_only: false,
+        mouse: true,
     };
     run(
         vault,

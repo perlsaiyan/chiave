@@ -31,6 +31,7 @@ database = "~/vault.kdbx"
 keyfile = "~/vault.keyx"   # optional
 clip_timeout = 10           # seconds before a copied secret is cleared
 timeout = 300               # idle seconds before the shell re-asks the password
+mouse = true                # TUI mouse support; Shift+drag selects text while on
 ```
 
 Environment: `CHIAVE_KDB`, `CHIAVE_KEYFILE`, `CHIAVE_PASSWORD` (scripts only),

@@ -11,7 +11,8 @@ use unicode_width::UnicodeWidthStr;
 use chiave_core::{EntryView, ExposeSecret, FieldValue};
 
 use crate::app::{App, Focus, Mode};
-use crate::form::{FieldKind, FIXED};
+use crate::dialog::{Dialog, Picker};
+use crate::form::{FieldKind, FormState, FIXED};
 
 const MASK: &str = "••••••••";
 const ACCENT: Color = Color::Cyan;
@@ -35,68 +36,89 @@ fn pane(title: &str, active: bool) -> Block<'static> {
         .title(Span::styled(format!(" {title} "), focused_style(active)))
 }
 
-/// Which panes are visible at this width.
-struct Panes {
-    tree: Option<Rect>,
-    entries: Option<Rect>,
-    detail: Option<Rect>,
+/// Where every pane ended up, as one pure function of the area and the app.
+///
+/// [`draw`] renders through this and [`App::handle_mouse`] hit-tests against the
+/// copy the last [`draw`] left behind, so the two can never disagree about which
+/// pixel belongs to which pane.
+///
+/// `tree`, `entries` and `detail` are the outer (bordered) rectangles, so their
+/// first row of content is at `y + 1`; use [`inner`] to get the content area.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Panes {
+    /// The group tree, when it is wide enough to be shown.
+    pub tree: Option<Rect>,
+    /// The entry list (or the search hits).
+    pub entries: Option<Rect>,
+    /// The entry detail.
+    pub detail: Option<Rect>,
+    /// The one-line status bar along the bottom.
+    pub status: Rect,
+    /// Everything above the status bar; overlays are centred in it.
+    pub body: Rect,
 }
 
-fn layout_panes(app: &App, area: Rect) -> Panes {
-    if area.width < 60 {
-        // One pane at a time; Esc walks back towards the tree.
-        return match app.focus {
-            Focus::Tree => Panes {
-                tree: Some(area),
-                entries: None,
-                detail: None,
-            },
-            Focus::Entries => Panes {
-                tree: None,
-                entries: Some(area),
-                detail: None,
-            },
-            Focus::Detail => Panes {
-                tree: None,
-                entries: None,
-                detail: Some(area),
-            },
-        };
+/// The content area inside a bordered pane or overlay.
+pub fn inner(area: Rect) -> Rect {
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
     }
-    if area.width < 100 {
+}
+
+/// Split `area` the way [`draw`] does: a status line along the bottom and, above
+/// it, one to three panes depending on the width and the focus.
+pub fn layout(area: Rect, app: &App) -> Panes {
+    let [body, status] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    let mut panes = Panes {
+        body,
+        status,
+        ..Panes::default()
+    };
+    if app.mode() == Mode::Locked {
+        // The unlock screen owns the body; no pane is hit-testable.
+        return panes;
+    }
+    if body.width < 60 {
+        // One pane at a time; Esc walks back towards the tree.
+        match app.focus() {
+            Focus::Tree => panes.tree = Some(body),
+            Focus::Entries => panes.entries = Some(body),
+            Focus::Detail => panes.detail = Some(body),
+        }
+        return panes;
+    }
+    if body.width < 100 {
         // The tree only earns its space when it has the focus.
         let [a, b] = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .areas(area);
-        return if app.focus == Focus::Tree {
-            Panes {
-                tree: Some(a),
-                entries: Some(b),
-                detail: None,
-            }
+            .areas(body);
+        if app.focus() == Focus::Tree {
+            panes.tree = Some(a);
+            panes.entries = Some(b);
         } else {
-            Panes {
-                tree: None,
-                entries: Some(a),
-                detail: Some(b),
-            }
-        };
+            panes.entries = Some(a);
+            panes.detail = Some(b);
+        }
+        return panes;
     }
     let [a, b, c] = Layout::horizontal([
         Constraint::Length(28),
         Constraint::Percentage(35),
         Constraint::Min(20),
     ])
-    .areas(area);
-    Panes {
-        tree: Some(a),
-        entries: Some(b),
-        detail: Some(c),
-    }
+    .areas(body);
+    panes.tree = Some(a);
+    panes.entries = Some(b);
+    panes.detail = Some(c);
+    panes
 }
 
 pub fn draw(app: &App, frame: &mut Frame) {
-    let area = frame.area();
-    let [body, status] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    let panes = layout(frame.area(), app);
+    app.remember_panes(panes);
+    let (body, status) = (panes.body, panes.status);
 
     if app.mode == Mode::Locked {
         draw_unlock(app, frame, body);
@@ -104,7 +126,6 @@ pub fn draw(app: &App, frame: &mut Frame) {
         return;
     }
 
-    let panes = layout_panes(app, body);
     if let Some(r) = panes.tree {
         draw_tree(app, frame, r);
     }
@@ -170,13 +191,22 @@ fn draw_tree(app: &App, frame: &mut Frame, area: Rect) {
         .highlight_symbol("");
     let mut state = ListState::default().with_selected(Some(app.tree.selected));
     frame.render_stateful_widget(list, area, &mut state);
+    // Remember where the list ended up scrolled to, so a click can turn a screen
+    // row back into a tree row.
+    app.remember_tree_offset(state.offset());
 }
 
+/// The selected row.
+///
+/// Everything here stays on the terminal's own 16 colours: `REVERSED` paints the
+/// accent as the background and borrows the terminal's background colour for the
+/// text, which reads on light and dark palettes alike. A literal `Color::Black`
+/// would vanish into the highlight on a dark theme.
 fn selection_style(active: bool) -> Style {
     if active {
         Style::default()
-            .bg(ACCENT)
-            .fg(Color::Black)
+            .fg(ACCENT)
+            .add_modifier(Modifier::REVERSED)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().add_modifier(Modifier::REVERSED)
@@ -257,6 +287,7 @@ fn draw_entries(app: &App, frame: &mut Frame, area: Rect) {
                 .block(pane(&title, active)),
             area,
         );
+        app.remember_entry_offset(0);
         return;
     }
     let list = List::new(items)
@@ -264,6 +295,7 @@ fn draw_entries(app: &App, frame: &mut Frame, area: Rect) {
         .highlight_style(selection_style(active));
     let mut state = ListState::default().with_selected(Some(selected));
     frame.render_stateful_widget(list, area, &mut state);
+    app.remember_entry_offset(state.offset());
 }
 
 // ----- right pane -----------------------------------------------------------
@@ -299,6 +331,10 @@ fn draw_detail(app: &App, frame: &mut Frame, area: Rect) {
         area,
     );
 }
+
+/// The row `detail_lines` puts the password on (Title, Username, Password), so a
+/// double-click there can toggle the reveal.
+pub(crate) const DETAIL_PASSWORD_LINE: u16 = 2;
 
 fn detail_lines(app: &App, view: &EntryView) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -512,8 +548,8 @@ fn overlay(frame: &mut Frame, area: Rect, title: &str) -> Rect {
     inner
 }
 
-fn draw_dialog(app: &App, frame: &mut Frame, area: Rect) {
-    let Some(d) = app.dialog.as_ref() else { return };
+/// Where the confirmation dialog lands inside `area`.
+pub(crate) fn dialog_rect(d: &Dialog, area: Rect) -> Rect {
     let width = d
         .body
         .iter()
@@ -523,7 +559,12 @@ fn draw_dialog(app: &App, frame: &mut Frame, area: Rect) {
         .max(d.title.width() as u16)
         .max(40)
         + 4;
-    let rect = popup(area, width.min(area.width), d.body.len() as u16 + 4);
+    popup(area, width.min(area.width), d.body.len() as u16 + 4)
+}
+
+fn draw_dialog(app: &App, frame: &mut Frame, area: Rect) {
+    let Some(d) = app.dialog.as_ref() else { return };
+    let rect = dialog_rect(d, area);
     let inner = overlay(frame, rect, &d.title);
     let mut lines: Vec<Line> = d.body.iter().map(|b| Line::from(b.clone())).collect();
     lines.push(Line::from(""));
@@ -547,22 +588,32 @@ fn draw_dialog(app: &App, frame: &mut Frame, area: Rect) {
     );
 }
 
+/// Where the single-line text prompt lands inside `area`.
+pub(crate) fn prompt_rect(area: Rect) -> Rect {
+    popup(area, 50, 5)
+}
+
 fn draw_prompt(app: &App, frame: &mut Frame, area: Rect) {
     let Some(p) = app.prompt_box.as_ref() else {
         return;
     };
-    let rect = popup(area, 50, 5);
+    let rect = prompt_rect(area);
     let inner = overlay(frame, rect, &p.title);
     let text = with_cursor(&p.input.value, p.input.cursor);
     frame.render_widget(Paragraph::new(Line::from(text)), inner);
 }
 
-fn draw_picker(app: &App, frame: &mut Frame, area: Rect) {
-    let Some(p) = app.picker.as_ref() else { return };
+/// Where the move-target picker lands inside `area`.
+pub(crate) fn picker_rect(p: &Picker, area: Rect) -> Rect {
     let height = (p.groups.len() as u16 + 2)
         .min(area.height.saturating_sub(2))
         .max(3);
-    let rect = popup(area, 52, height);
+    popup(area, 52, height)
+}
+
+fn draw_picker(app: &App, frame: &mut Frame, area: Rect) {
+    let Some(p) = app.picker.as_ref() else { return };
+    let rect = picker_rect(p, area);
     let inner = overlay(frame, rect, &format!("Move {}", p.label));
     let items: Vec<ListItem> = p
         .groups
@@ -574,9 +625,14 @@ fn draw_picker(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
+/// Where the generator options popup lands inside `area`.
+pub(crate) fn gen_rect(area: Rect) -> Rect {
+    popup(area, 46, 7)
+}
+
 fn draw_gen(app: &App, frame: &mut Frame, area: Rect) {
     let Some(g) = app.gen.as_ref() else { return };
-    let rect = popup(area, 46, 7);
+    let rect = gen_rect(area);
     let inner = overlay(frame, rect, "Generate password");
     let on = |b: bool| if b { "on" } else { "off" };
     let lines = vec![
@@ -601,6 +657,27 @@ fn with_cursor(value: &str, cursor: usize) -> String {
     format!("{}▏{}", &value[..at], &value[at..])
 }
 
+/// How many screen rows each form field occupies, in order.
+///
+/// `draw_form` lays the fields out with exactly these heights, so a click at row
+/// `n` inside the form belongs to the field whose run contains `n`.
+pub(crate) fn form_field_rows(form: &FormState) -> Vec<usize> {
+    form.fields
+        .iter()
+        .map(|f| f.input.value.matches('\n').count() + 1)
+        .collect()
+}
+
+/// Where the edit form lands inside `area`.
+pub(crate) fn form_rect(form: &FormState, area: Rect) -> Rect {
+    let rows: usize = form_field_rows(form).iter().sum();
+    popup(
+        area,
+        area.width.saturating_sub(6).min(76),
+        area.height.saturating_sub(2).min(rows as u16 + 6),
+    )
+}
+
 fn draw_form(app: &App, frame: &mut Frame, area: Rect) {
     let Some(form) = app.form.as_ref() else {
         return;
@@ -610,16 +687,7 @@ fn draw_form(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         "New entry"
     };
-    let rows: usize = form
-        .fields
-        .iter()
-        .map(|f| f.input.value.matches('\n').count() + 1)
-        .sum();
-    let rect = popup(
-        area,
-        area.width.saturating_sub(6).min(76),
-        area.height.saturating_sub(2).min(rows as u16 + 6),
-    );
+    let rect = form_rect(form, area);
     let inner = overlay(frame, rect, title);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -673,27 +741,39 @@ fn draw_form(app: &App, frame: &mut Frame, area: Rect) {
     );
 }
 
+/// The help overlay's rows, shared with [`help_rect`] so the popup is always
+/// exactly tall enough.
+const HELP_ROWS: [(&str, &str); 20] = [
+    ("Tab / Shift-Tab", "cycle panes"),
+    ("j k ↑ ↓", "move · h l ← → fold the tree"),
+    ("Enter", "tree → entries → detail"),
+    ("/", "fuzzy search, Esc clears"),
+    ("y or p", "copy the password"),
+    ("u / U / o", "copy username / URL / TOTP"),
+    ("x", "clear the clipboard"),
+    ("v", "reveal the password for this entry"),
+    ("n / e", "new / edit entry"),
+    ("d / D", "delete (recycle bin) / delete for good"),
+    ("m", "move entry or group"),
+    ("r / N", "rename group / new group"),
+    ("s", "save the vault"),
+    ("L", "lock now"),
+    ("? / q", "this help / quit"),
+    ("Ctrl-c", "quit without saving"),
+    ("in the form", "Ctrl-s save, Ctrl-g generate, Alt-g options"),
+    ("mouse", "click to select · double-click to open"),
+    ("mouse wheel", "scroll the list or the detail pane"),
+    ("Shift+drag", "select text while the mouse is captured"),
+];
+
+/// Where the help overlay lands inside `area`.
+pub(crate) fn help_rect(area: Rect) -> Rect {
+    popup(area, 62, HELP_ROWS.len() as u16 + 2)
+}
+
 fn draw_help(frame: &mut Frame, area: Rect) {
-    let rows = [
-        ("Tab / Shift-Tab", "cycle panes"),
-        ("j k ↑ ↓", "move · h l ← → fold the tree"),
-        ("Enter", "tree → entries → detail"),
-        ("/", "fuzzy search, Esc clears"),
-        ("y or p", "copy the password"),
-        ("u / U / o", "copy username / URL / TOTP"),
-        ("x", "clear the clipboard"),
-        ("v", "reveal the password for this entry"),
-        ("n / e", "new / edit entry"),
-        ("d / D", "delete (recycle bin) / delete for good"),
-        ("m", "move entry or group"),
-        ("r / N", "rename group / new group"),
-        ("s", "save the vault"),
-        ("L", "lock now"),
-        ("? / q", "this help / quit"),
-        ("Ctrl-c", "quit without saving"),
-        ("in the form", "Ctrl-s save, Ctrl-g generate, Alt-g options"),
-    ];
-    let rect = popup(area, 62, rows.len() as u16 + 2);
+    let rows = HELP_ROWS;
+    let rect = help_rect(area);
     let inner = overlay(frame, rect, "Keys");
     let lines: Vec<Line> = rows
         .iter()
@@ -710,9 +790,14 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+/// Where the unlock screen lands inside `area`.
+pub(crate) fn unlock_rect(area: Rect) -> Rect {
+    popup(area, 52, 9)
+}
+
 fn draw_unlock(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Clear, area);
-    let rect = popup(area, 52, 9);
+    let rect = unlock_rect(area);
     let inner = overlay(frame, rect, "Locked");
     let dots = "•".repeat(app.unlock.input.value.chars().count());
     let mut lines = vec![

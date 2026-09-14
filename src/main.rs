@@ -72,6 +72,10 @@ struct Cli {
     #[arg(long = "no-save")]
     no_save: bool,
 
+    /// Disable mouse support in the TUI (mouse capture makes text selection need Shift+drag)
+    #[arg(long = "no-mouse")]
+    no_mouse: bool,
+
     /// Database to open, kpcli style
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
@@ -128,7 +132,8 @@ fn run() -> anyhow::Result<ExitCode> {
     let vault = Vault::open(&database, &creds, cli.readonly)
         .with_context(|| format!("opening {}", database.display()))?;
     if wants_tui(&cli) {
-        return run_tui(vault, &cli, &opts);
+        let mouse = !cli.no_mouse && cfg.mouse.unwrap_or(true);
+        return run_tui(vault, &cli, &opts, mouse);
     }
     let mut shell = Shell::with_vault(vault, clipboard(&cli), opts);
     shell.set_keyfile(keyfile);
@@ -148,11 +153,12 @@ fn wants_tui(cli: &Cli) -> bool {
     }
 }
 
-fn run_tui(vault: Vault, cli: &Cli, opts: &ShellOptions) -> anyhow::Result<ExitCode> {
+fn run_tui(vault: Vault, cli: &Cli, opts: &ShellOptions, mouse: bool) -> anyhow::Result<ExitCode> {
     let tui_opts = chiave_tui::TuiOptions {
         clip_timeout: opts.clip_timeout,
         idle_lock: opts.timeout,
         read_only: cli.readonly,
+        mouse,
     };
     chiave_tui::run(vault, clipboard(cli), tui_opts, Box::new(TtyPrompt))?;
     Ok(ExitCode::SUCCESS)

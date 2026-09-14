@@ -1,9 +1,13 @@
 //! Application state: everything the TUI knows, driven only by keys and a clock.
 
-use std::time::Instant;
+use std::cell::Cell;
+use std::time::{Duration, Instant};
 
 use chrono::NaiveDate;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use ratatui::Frame;
 
 use chiave_clip::Clipboard;
@@ -19,7 +23,14 @@ use crate::form::{
 };
 use crate::search::Search;
 use crate::tree::Tree;
+use crate::ui::{self, Panes};
 use crate::{PasswordPrompt, TuiOptions};
+
+/// Two clicks on the same row inside this window are a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
+/// How far one wheel notch scrolls the detail pane.
+const DETAIL_WHEEL_LINES: u16 = 3;
 
 /// Which pane has the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +105,31 @@ pub struct App {
     quit: bool,
     /// Set when the user asked for the out-of-band password prompt.
     external_prompt: bool,
+
+    /// Where the panes were the last time [`App::draw`] ran, so a mouse event
+    /// can be hit-tested without a frame. Written through a `Cell` because
+    /// drawing only borrows the app.
+    panes: Cell<Panes>,
+    /// The scroll offsets the two lists ended up with in that same frame.
+    tree_offset: Cell<usize>,
+    entry_offset: Cell<usize>,
+    /// The last left click, for double-click detection.
+    last_click: Option<LastClick>,
+}
+
+/// What a left click landed on, for comparing one click against the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClickTarget {
+    Tree(usize),
+    Entries(usize),
+    /// A row of the detail pane's content, scroll included.
+    Detail(u16),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LastClick {
+    target: ClickTarget,
+    at: Instant,
 }
 
 impl App {
@@ -145,6 +181,10 @@ impl App {
             last_input: Instant::now(),
             quit: false,
             external_prompt: false,
+            panes: Cell::new(Panes::default()),
+            tree_offset: Cell::new(0),
+            entry_offset: Cell::new(0),
+            last_click: None,
         };
         app.refresh();
         app.sync_from_cwd();
@@ -223,6 +263,40 @@ impl App {
 
     pub fn last_input(&self) -> Instant {
         self.last_input
+    }
+
+    /// How far the detail pane is scrolled, in lines.
+    pub fn detail_scroll(&self) -> u16 {
+        self.detail_scroll
+    }
+
+    /// Whether the selected entry's secrets are currently revealed.
+    pub fn is_revealed(&self) -> bool {
+        self.reveal
+    }
+
+    /// The selected row of the middle pane: an entry, or a search hit.
+    pub fn entry_index(&self) -> usize {
+        self.list_sel()
+    }
+
+    /// Where the panes were the last time [`App::draw`] ran.
+    ///
+    /// Empty until the first draw; [`App::handle_mouse`] hit-tests against it.
+    pub fn panes(&self) -> Panes {
+        self.panes.get()
+    }
+
+    pub(crate) fn remember_panes(&self, panes: Panes) {
+        self.panes.set(panes);
+    }
+
+    pub(crate) fn remember_tree_offset(&self, offset: usize) {
+        self.tree_offset.set(offset);
+    }
+
+    pub(crate) fn remember_entry_offset(&self, offset: usize) {
+        self.entry_offset.set(offset);
     }
 
     /// Whether the run loop should drop out of the alternate screen and use the
@@ -652,6 +726,227 @@ impl App {
             Mode::Form => self.key_form(key),
             Mode::Search => self.key_search(key),
             Mode::Browse => self.key_browse(key),
+        }
+    }
+
+    // ----- mouse entry point ------------------------------------------------
+
+    /// Apply a mouse event, timestamped now.
+    pub fn handle_mouse(&mut self, ev: MouseEvent) {
+        self.handle_mouse_at(ev, Instant::now());
+    }
+
+    /// Apply a mouse event against an injected clock, the way [`App::tick`]
+    /// takes its `now`, so double-clicks can be tested without sleeping.
+    ///
+    /// Hit-testing uses the geometry the last [`App::draw`] left in
+    /// [`App::panes`]; before the first draw every click is a no-op.
+    pub fn handle_mouse_at(&mut self, ev: MouseEvent, now: Instant) {
+        // Anything the mouse does counts as activity, exactly like a key.
+        self.last_input = now;
+        let at = Position::new(ev.column, ev.row);
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.mouse_click(at, now),
+            MouseEventKind::ScrollUp => self.mouse_scroll(at, -1),
+            MouseEventKind::ScrollDown => self.mouse_scroll(at, 1),
+            // Right and middle buttons, releases, drags and bare motion: nothing.
+            _ => {}
+        }
+    }
+
+    /// The overlay on top and where it sits, or `None` when none is open.
+    fn modal_rect(&self) -> Option<Rect> {
+        let body = self.panes.get().body;
+        match self.mode {
+            Mode::Help => Some(ui::help_rect(body)),
+            Mode::Dialog => self.dialog.as_ref().map(|d| ui::dialog_rect(d, body)),
+            Mode::GenOptions => Some(ui::gen_rect(body)),
+            Mode::Prompt => Some(ui::prompt_rect(body)),
+            Mode::Picker => self.picker.as_ref().map(|p| ui::picker_rect(p, body)),
+            Mode::Form => self.form.as_ref().map(|f| ui::form_rect(f, body)),
+            Mode::Locked => Some(ui::unlock_rect(body)),
+            Mode::Browse | Mode::Search => None,
+        }
+    }
+
+    /// True when this click pairs up with the previous one.
+    fn double_click(&mut self, target: ClickTarget, now: Instant) -> bool {
+        let double = self.last_click.is_some_and(|c| {
+            c.target == target && now.saturating_duration_since(c.at) <= DOUBLE_CLICK
+        });
+        // Forget the pair, so a third click does not double again.
+        self.last_click = (!double).then_some(LastClick { target, at: now });
+        double
+    }
+
+    fn mouse_click(&mut self, at: Position, now: Instant) {
+        if let Some(rect) = self.modal_rect() {
+            // Deliberately no dismiss-on-click: a stray click outside a
+            // confirmation must never answer it. Only the form reads clicks,
+            // and only inside itself.
+            if self.mode == Mode::Form && rect.contains(at) {
+                self.form_click(rect, at);
+            }
+            return;
+        }
+        let panes = self.panes.get();
+        if let Some(r) = panes.tree.filter(|r| r.contains(at)) {
+            self.tree_click(r, at, now);
+        } else if let Some(r) = panes.entries.filter(|r| r.contains(at)) {
+            self.entries_click(r, at, now);
+        } else if let Some(r) = panes.detail.filter(|r| r.contains(at)) {
+            self.detail_click(r, at, now);
+        }
+        // A click anywhere else -- the status line, a hidden pane's gap -- does nothing.
+    }
+
+    fn tree_click(&mut self, area: Rect, at: Position, now: Instant) {
+        self.focus = Focus::Tree;
+        let inner = ui::inner(area);
+        let Some(offset) = row_in(area, at) else {
+            return;
+        };
+        let row = self.tree_offset.get() + offset as usize;
+        let Some((depth, has_children)) =
+            self.tree.rows.get(row).map(|r| (r.depth, r.has_children))
+        else {
+            return;
+        };
+        if self.search.active {
+            self.search.clear();
+            self.reload_entries();
+        }
+        if self.tree.selected != row {
+            self.tree.selected = row;
+            self.on_group_changed();
+        }
+        // The two columns that hold the ▸/▾ marker fold on a single click.
+        let arrow = inner.x.saturating_add(depth as u16 * 2);
+        let on_arrow = has_children && at.x >= arrow && at.x < arrow.saturating_add(2);
+        if self.double_click(ClickTarget::Tree(row), now) || on_arrow {
+            self.toggle_tree_fold();
+        }
+    }
+
+    /// Fold or unfold the selected group, without the keyboard's habit of
+    /// stepping into the first child when it is already open.
+    fn toggle_tree_fold(&mut self) {
+        let Some((has_children, expanded)) = self
+            .tree
+            .selected_row()
+            .map(|r| (r.has_children, r.expanded))
+        else {
+            return;
+        };
+        if !has_children {
+            return;
+        }
+        let changed = if expanded {
+            self.tree.collapse_selected()
+        } else {
+            self.tree.expand_selected()
+        };
+        if changed {
+            self.refresh();
+        }
+        self.on_group_changed();
+    }
+
+    fn entries_click(&mut self, area: Rect, at: Position, now: Instant) {
+        self.focus = Focus::Entries;
+        let Some(offset) = row_in(area, at) else {
+            return;
+        };
+        let row = self.entry_offset.get() + offset as usize;
+        if row >= self.list_len() {
+            return;
+        }
+        if row != self.list_sel() {
+            self.list_select(row);
+        }
+        if self.double_click(ClickTarget::Entries(row), now) {
+            self.activate();
+        }
+    }
+
+    fn detail_click(&mut self, area: Rect, at: Position, now: Instant) {
+        self.focus = Focus::Detail;
+        let Some(offset) = row_in(area, at) else {
+            return;
+        };
+        let line = offset.saturating_add(self.detail_scroll);
+        if self.double_click(ClickTarget::Detail(line), now)
+            && line == ui::DETAIL_PASSWORD_LINE
+            && self.selected_entry_id().is_some()
+        {
+            self.reveal = !self.reveal;
+        }
+    }
+
+    /// A click inside the edit form moves the focus to the field it landed on.
+    fn form_click(&mut self, rect: Rect, at: Position) {
+        let inner = ui::inner(rect);
+        if !inner.contains(at) {
+            return;
+        }
+        let Some(form) = self.form.as_ref() else {
+            return;
+        };
+        let mut row = at.y - inner.y;
+        let mut hit = None;
+        for (i, height) in ui::form_field_rows(form).into_iter().enumerate() {
+            let height = height as u16;
+            if row < height {
+                hit = Some(i);
+                break;
+            }
+            row -= height;
+        }
+        if let (Some(i), Some(form)) = (hit, self.form.as_mut()) {
+            form.focus = i;
+        }
+    }
+
+    fn mouse_scroll(&mut self, at: Position, delta: i32) {
+        if self.modal_rect().is_some() {
+            // The group picker is the only scrollable overlay; the others are
+            // sized to their contents.
+            if let (Mode::Picker, Some(p)) = (self.mode, self.picker.as_mut()) {
+                if delta > 0 {
+                    p.next();
+                } else {
+                    p.prev();
+                }
+            }
+            return;
+        }
+        let panes = self.panes.get();
+        if panes.tree.is_some_and(|r| r.contains(at)) {
+            if self.search.active {
+                self.search.clear();
+                self.reload_entries();
+            }
+            if delta > 0 {
+                self.tree.select_next();
+            } else {
+                self.tree.select_prev();
+            }
+            self.on_group_changed();
+        } else if panes.entries.is_some_and(|r| r.contains(at)) {
+            let len = self.list_len();
+            if len == 0 {
+                return;
+            }
+            let next = (self.list_sel() as i32 + delta).clamp(0, len as i32 - 1) as usize;
+            if next != self.list_sel() {
+                self.list_select(next);
+            }
+        } else if panes.detail.is_some_and(|r| r.contains(at)) {
+            self.detail_scroll = if delta > 0 {
+                self.detail_scroll.saturating_add(DETAIL_WHEEL_LINES)
+            } else {
+                self.detail_scroll.saturating_sub(DETAIL_WHEEL_LINES)
+            };
         }
     }
 
@@ -1409,6 +1704,13 @@ impl App {
         });
         self.push_mode(Mode::Prompt);
     }
+}
+
+/// The zero-based content row `at` falls on inside a bordered pane, or `None`
+/// when it landed on the border itself.
+fn row_in(area: Rect, at: Position) -> Option<u16> {
+    let inner = ui::inner(area);
+    inner.contains(at).then(|| at.y - inner.y)
 }
 
 impl Unlock {

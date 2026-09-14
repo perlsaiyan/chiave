@@ -22,6 +22,8 @@ pub struct Config {
     pub histfile: Option<PathBuf>,
     /// Word list used to generate passphrases.
     pub pwwords: Option<PathBuf>,
+    /// Mouse support in the TUI (default true).
+    pub mouse: Option<bool>,
 }
 
 /// The directory holding chiave's configuration.
