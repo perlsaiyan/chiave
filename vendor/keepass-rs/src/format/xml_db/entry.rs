@@ -188,14 +188,20 @@ impl Entry {
             });
         }
 
+        // chiave patch: binaries are written positionally in ascending id order (see
+        // to_xml), so the Ref must be the position of the id in that order, not the id
+        // itself. With any gap in ids (after a removal) the two diverged and every later
+        // attachment was silently lost on reload. Dangling references are skipped.
+        let mut ordered_ids: Vec<usize> = db.database().attachments.keys().map(|k| k.id()).collect();
+        ordered_ids.sort_unstable();
         let mut binary_fields = Vec::with_capacity(db.attachments.len());
         for (key, attachment) in &db.attachments {
-            binary_fields.push(BinaryField {
-                key: key.clone(),
-                value: BinaryValue {
-                    value_ref: attachment.id(),
-                },
-            });
+            if let Ok(position) = ordered_ids.binary_search(&attachment.id()) {
+                binary_fields.push(BinaryField {
+                    key: key.clone(),
+                    value: BinaryValue { value_ref: position },
+                });
+            }
         }
 
         let history = if let Some(h) = db.history.as_ref() {

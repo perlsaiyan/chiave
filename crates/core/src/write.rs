@@ -57,7 +57,7 @@ pub enum SaveError {
     Reparse(#[from] keepass::error::DatabaseOpenError),
     #[error("saved database does not match memory: {}", .0.join("; "))]
     Verify(Vec<String>),
-    #[error("cannot write {path}: {source}")]
+    #[error("cannot write {path}")]
     Io {
         path: PathBuf,
         #[source]
@@ -519,6 +519,70 @@ impl Vault {
         Ok(new_id)
     }
 
+    // ----- attachments ------------------------------------------------------
+
+    /// Names and sizes of an entry's attachments, sorted by name.
+    pub fn attachments(&self, id: EntryId) -> Result<Vec<(String, usize)>, WriteError> {
+        let e = self.db.entry(id).ok_or(WriteError::Gone)?;
+        let mut out: Vec<(String, usize)> = e
+            .attachments_named()
+            .map(|(n, a)| (n.to_string(), a.data.get().len()))
+            .collect();
+        out.sort();
+        Ok(out)
+    }
+
+    /// Contents of one attachment.
+    pub fn attachment_data(
+        &self,
+        id: EntryId,
+        name: &str,
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>, WriteError> {
+        let e = self.db.entry(id).ok_or(WriteError::Gone)?;
+        let a = e
+            .attachment_by_name(name)
+            .ok_or_else(|| ResolveError::NotFound(name.to_string()))?;
+        Ok(zeroize::Zeroizing::new(a.data.get().clone()))
+    }
+
+    /// Add (or replace) an attachment; the previous state goes to history.
+    pub fn add_attachment(
+        &mut self,
+        id: EntryId,
+        name: &str,
+        data: Vec<u8>,
+    ) -> Result<(), WriteError> {
+        self.ensure_writable()?;
+        let mut em = self.db.entry_mut(id).ok_or(WriteError::Gone)?;
+        em.edit_tracking(|t| {
+            t.as_mut().remove_attachment_by_name(name);
+            t.add_attachment(name.to_string(), Value::protected(data));
+        });
+        self.touch();
+        Ok(())
+    }
+
+    /// Remove an attachment; the previous state goes to history.
+    pub fn remove_attachment(&mut self, id: EntryId, name: &str) -> Result<(), WriteError> {
+        self.ensure_writable()?;
+        let exists = self
+            .db
+            .entry(id)
+            .ok_or(WriteError::Gone)?
+            .attachment_by_name(name)
+            .is_some();
+        if !exists {
+            return Err(ResolveError::NotFound(name.to_string()).into());
+        }
+        let mut em = self.db.entry_mut(id).ok_or(WriteError::Gone)?;
+        em.edit_tracking(|t| {
+            t.as_mut().remove_attachment_by_name(name);
+            t.times.last_modification = Some(Times::now());
+        });
+        self.touch();
+        Ok(())
+    }
+
     // ----- key --------------------------------------------------------------
 
     /// `passwd`: change the master password and/or key file. Takes effect on the next save.
@@ -572,6 +636,13 @@ impl Vault {
                 if before != now {
                     return Err(SaveError::ChangedOnDisk(path.to_path_buf()));
                 }
+            }
+        }
+        // keepass-rs serializes KDBX 4.1 only. KeePassXC writes 4.0 when no 4.1 feature
+        // is in use and reads 4.1 without complaint, so bump the minor version here.
+        if let DatabaseVersion::KDB4(minor) = self.db.config.version {
+            if minor < 1 {
+                self.db.config.version = DatabaseVersion::KDB4(1);
             }
         }
         let mut buf = Vec::new();

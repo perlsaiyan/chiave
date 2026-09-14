@@ -148,19 +148,28 @@ pub struct Stats {
 
 /// A vault that has been locked: keeps enough to re-open it without the key file path
 /// being asked again, but holds no key material.
+#[derive(Debug, Clone)]
 pub struct LockedVault {
     pub path: PathBuf,
     pub keyfile: Option<PathBuf>,
     pub read_only: bool,
+    /// Group that was current when the vault was locked; restored on unlock if it still exists.
+    pub cwd: Option<GroupId>,
 }
 
 impl LockedVault {
-    pub fn unlock(self, password: Option<SecretString>) -> Result<Vault, OpenError> {
+    /// Reopen with a password (the key file path is remembered). Does not consume `self`,
+    /// so a wrong password can simply be retried.
+    pub fn unlock(&self, password: Option<SecretString>) -> Result<Vault, OpenError> {
         let creds = Credentials {
             password,
-            keyfile: self.keyfile,
+            keyfile: self.keyfile.clone(),
         };
-        Vault::open(&self.path, &creds, self.read_only)
+        let mut v = Vault::open(&self.path, &creds, self.read_only)?;
+        if let Some(cwd) = self.cwd {
+            let _ = v.set_cwd(cwd);
+        }
+        Ok(v)
     }
 }
 
@@ -223,6 +232,7 @@ impl Vault {
             path: self.path,
             keyfile: self.keyfile,
             read_only: self.read_only,
+            cwd: Some(self.cwd),
         }
     }
 
@@ -452,6 +462,15 @@ impl Vault {
 
     pub fn cd(&mut self, spec: &str) -> Result<(), ResolveError> {
         self.cwd = self.resolve_group(spec)?;
+        Ok(())
+    }
+
+    /// Make `group` the current group. Fails if the id no longer exists.
+    pub fn set_cwd(&mut self, group: GroupId) -> Result<(), ResolveError> {
+        if self.db.group(group).is_none() {
+            return Err(ResolveError::NotFound(format!("group {}", group.uuid())));
+        }
+        self.cwd = group;
         Ok(())
     }
 

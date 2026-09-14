@@ -38,8 +38,16 @@ chiave-clip.workspace = true
 chiave-shell.workspace = true
 chiave-tui.workspace = true
 anyhow.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+zeroize.workspace = true
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Patched keepass-rs: attachment reference fixes, see vendor/keepass-rs/CHIAVE-PATCHES.md
+[patch.crates-io]
+keepass = { path = "vendor/keepass-rs" }

@@ -1,0 +1,190 @@
+diff --git a/vendor/keepass-rs/src/db/types/entry.rs b/vendor/keepass-rs/src/db/types/entry.rs
+index 2bcac00..7f5383f 100644
+--- a/vendor/keepass-rs/src/db/types/entry.rs
++++ b/vendor/keepass-rs/src/db/types/entry.rs
+@@ -435,7 +435,8 @@ impl EntryMut<'_> {
+     pub fn add_attachment(&mut self, name: impl Into<String>, data: Value<Vec<u8>>) -> AttachmentMut<'_> {
+         let id = AttachmentId::next_free(self.database);
+ 
+-        let entries: HashSet<(EntryId, Option<usize>)> = vec![(self.id, None)].into_iter().collect();
++        let entries: HashSet<(EntryId, Option<usize>)> =
++            vec![(self.id, self.history_index)].into_iter().collect();
+ 
+         self.database
+             .attachments
+@@ -457,14 +458,11 @@ impl EntryMut<'_> {
+ 
+         // remove the attachment reference from this entry
+         if let Some(attachment_id) = self.attachments.remove(name) {
+-            if let Some(mut attachment) = self.database.attachment_mut(attachment_id) {
+-                attachment.entries.retain(|&(entry_id, _)| entry_id != id);
+-
+-                // if this was the last entry referencing the attachment, remove it from the database
+-                if attachment.entries.is_empty() {
+-                    attachment.remove();
+-                }
+-            }
++            // chiave patch: recompute this entry's back-references instead of dropping
++            // every reference by entry id, which also discarded still-valid references
++            // held by this entry's history and orphaned binaries other entries used.
++            self.database.rebuild_attachment_backrefs_for(id);
++            self.database.remove_attachment_if_orphaned(attachment_id);
+         }
+     }
+ 
+@@ -486,14 +484,9 @@ impl EntryMut<'_> {
+             self.attachments.remove(&name);
+         }
+ 
+-        if let Some(mut attachment) = self.database.attachment_mut(attachment_id) {
+-            attachment.entries.retain(|&(entry_id, _)| entry_id != id);
+-
+-            // if this was the last entry referencing the attachment, remove it from the database
+-            if attachment.entries.is_empty() {
+-                attachment.remove();
+-            }
+-        }
++        // chiave patch: see remove_attachment_by_name.
++        self.database.rebuild_attachment_backrefs_for(id);
++        self.database.remove_attachment_if_orphaned(attachment_id);
+     }
+ 
+     /// Remove the icon from this entry, if it exists.
+@@ -837,6 +830,11 @@ impl Drop for EntryTrack<'_> {
+             let historical = std::mem::replace(&mut self.historical, Entry::new(parent_id));
+ 
+             entry.history.get_or_insert_default().add_entry(historical);
++
++            // chiave patch: the snapshot was inserted at history index 0, shifting every
++            // other historical index, and it carries attachment/icon references of its
++            // own. Recompute the back-references so they stay accurate.
++            self.database.rebuild_entry_backrefs(self.id);
+         }
+     }
+ }
+diff --git a/vendor/keepass-rs/src/db/types/mod.rs b/vendor/keepass-rs/src/db/types/mod.rs
+index 5ef7d76..09f2934 100644
+--- a/vendor/keepass-rs/src/db/types/mod.rs
++++ b/vendor/keepass-rs/src/db/types/mod.rs
+@@ -124,6 +124,71 @@ impl Database {
+         GroupMut::new(self, self.root)
+     }
+ 
++    /// chiave patch: rebuild the attachment back-reference set for one entry (current
++    /// version and every historical version). Back-references are what decide whether a
++    /// binary is still in use; the upstream code never populated them on load and did
++    /// not refresh them when history indices shifted.
++    pub(crate) fn rebuild_attachment_backrefs_for(&mut self, entry_id: EntryId) {
++        for a in self.attachments.values_mut() {
++            a.entries.retain(|&(e, _)| e != entry_id);
++        }
++        let Some(entry) = self.entries.get(&entry_id) else {
++            return;
++        };
++        let mut refs: Vec<(AttachmentId, Option<usize>)> =
++            entry.attachments.values().map(|id| (*id, None)).collect();
++        if let Some(h) = &entry.history {
++            for (i, he) in h.entries.iter().enumerate() {
++                refs.extend(he.attachments.values().map(|id| (*id, Some(i))));
++            }
++        }
++        for (aid, hi) in refs {
++            if let Some(a) = self.attachments.get_mut(&aid) {
++                a.entries.insert((entry_id, hi));
++            }
++        }
++    }
++
++    /// chiave patch: rebuild the custom-icon back-reference set for one entry.
++    pub(crate) fn rebuild_custom_icon_backrefs_for(&mut self, entry_id: EntryId) {
++        for icon in self.custom_icons.values_mut() {
++            icon.entries.retain(|&(e, _)| e != entry_id);
++        }
++        let Some(entry) = self.entries.get(&entry_id) else {
++            return;
++        };
++        let mut refs: Vec<(CustomIconId, Option<usize>)> = Vec::new();
++        if let Some(Icon::Custom(id)) = entry.icon.as_ref() {
++            refs.push((*id, None));
++        }
++        if let Some(h) = &entry.history {
++            for (i, he) in h.entries.iter().enumerate() {
++                if let Some(Icon::Custom(id)) = he.icon.as_ref() {
++                    refs.push((*id, Some(i)));
++                }
++            }
++        }
++        for (iid, hi) in refs {
++            if let Some(icon) = self.custom_icons.get_mut(&iid) {
++                icon.entries.insert((entry_id, hi));
++            }
++        }
++    }
++
++    /// chiave patch: rebuild both kinds of back-references for one entry.
++    pub(crate) fn rebuild_entry_backrefs(&mut self, entry_id: EntryId) {
++        self.rebuild_attachment_backrefs_for(entry_id);
++        self.rebuild_custom_icon_backrefs_for(entry_id);
++    }
++
++    /// chiave patch: drop an attachment from the pool if nothing references it any more.
++    pub(crate) fn remove_attachment_if_orphaned(&mut self, id: AttachmentId) {
++        let orphaned = self.attachments.get(&id).map(|a| a.entries.is_empty()).unwrap_or(false);
++        if orphaned {
++            self.attachments.remove(&id);
++        }
++    }
++
+     /// Get an immutable reference to the recycle bin group, if it exists
+     pub fn recycle_bin(&self) -> Option<GroupRef<'_>> {
+         let recyclebin_id = self.meta.recyclebin_uuid.map(GroupId::from_uuid)?;
+diff --git a/vendor/keepass-rs/src/format/xml_db/entry.rs b/vendor/keepass-rs/src/format/xml_db/entry.rs
+index a9a5149..347f6eb 100644
+--- a/vendor/keepass-rs/src/format/xml_db/entry.rs
++++ b/vendor/keepass-rs/src/format/xml_db/entry.rs
+@@ -188,14 +188,20 @@ impl Entry {
+             });
+         }
+ 
++        // chiave patch: binaries are written positionally in ascending id order (see
++        // to_xml), so the Ref must be the position of the id in that order, not the id
++        // itself. With any gap in ids (after a removal) the two diverged and every later
++        // attachment was silently lost on reload. Dangling references are skipped.
++        let mut ordered_ids: Vec<usize> = db.database().attachments.keys().map(|k| k.id()).collect();
++        ordered_ids.sort_unstable();
+         let mut binary_fields = Vec::with_capacity(db.attachments.len());
+         for (key, attachment) in &db.attachments {
+-            binary_fields.push(BinaryField {
+-                key: key.clone(),
+-                value: BinaryValue {
+-                    value_ref: attachment.id(),
+-                },
+-            });
++            if let Ok(position) = ordered_ids.binary_search(&attachment.id()) {
++                binary_fields.push(BinaryField {
++                    key: key.clone(),
++                    value: BinaryValue { value_ref: position },
++                });
++            }
+         }
+ 
+         let history = if let Some(h) = db.history.as_ref() {
+diff --git a/vendor/keepass-rs/src/format/xml_db/mod.rs b/vendor/keepass-rs/src/format/xml_db/mod.rs
+index 2591836..7d29d36 100644
+--- a/vendor/keepass-rs/src/format/xml_db/mod.rs
++++ b/vendor/keepass-rs/src/format/xml_db/mod.rs
+@@ -158,6 +158,14 @@ impl KeePassFile {
+         db.attachments = attachments;
+         db.custom_icons = custom_icons;
+ 
++        // chiave patch: re-populate Attachment back-reference sets, which upstream never
++        // did on load (only custom icons were handled below). Without them, removing an
++        // attachment from one entry deleted a binary still used by other entries/history.
++        let entry_ids: Vec<crate::db::EntryId> = db.entries.keys().copied().collect();
++        for entry_id in entry_ids {
++            db.rebuild_attachment_backrefs_for(entry_id);
++        }
++
+         // Re-populate CustomIcon back-reference sets.
+         //
+         // The XML parser creates CustomIcon values with empty `entries` and `groups` sets

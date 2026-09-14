@@ -435,7 +435,8 @@ impl EntryMut<'_> {
     pub fn add_attachment(&mut self, name: impl Into<String>, data: Value<Vec<u8>>) -> AttachmentMut<'_> {
         let id = AttachmentId::next_free(self.database);
 
-        let entries: HashSet<(EntryId, Option<usize>)> = vec![(self.id, None)].into_iter().collect();
+        let entries: HashSet<(EntryId, Option<usize>)> =
+            vec![(self.id, self.history_index)].into_iter().collect();
 
         self.database
             .attachments
@@ -457,14 +458,11 @@ impl EntryMut<'_> {
 
         // remove the attachment reference from this entry
         if let Some(attachment_id) = self.attachments.remove(name) {
-            if let Some(mut attachment) = self.database.attachment_mut(attachment_id) {
-                attachment.entries.retain(|&(entry_id, _)| entry_id != id);
-
-                // if this was the last entry referencing the attachment, remove it from the database
-                if attachment.entries.is_empty() {
-                    attachment.remove();
-                }
-            }
+            // chiave patch: recompute this entry's back-references instead of dropping
+            // every reference by entry id, which also discarded still-valid references
+            // held by this entry's history and orphaned binaries other entries used.
+            self.database.rebuild_attachment_backrefs_for(id);
+            self.database.remove_attachment_if_orphaned(attachment_id);
         }
     }
 
@@ -486,14 +484,9 @@ impl EntryMut<'_> {
             self.attachments.remove(&name);
         }
 
-        if let Some(mut attachment) = self.database.attachment_mut(attachment_id) {
-            attachment.entries.retain(|&(entry_id, _)| entry_id != id);
-
-            // if this was the last entry referencing the attachment, remove it from the database
-            if attachment.entries.is_empty() {
-                attachment.remove();
-            }
-        }
+        // chiave patch: see remove_attachment_by_name.
+        self.database.rebuild_attachment_backrefs_for(id);
+        self.database.remove_attachment_if_orphaned(attachment_id);
     }
 
     /// Remove the icon from this entry, if it exists.
@@ -837,6 +830,11 @@ impl Drop for EntryTrack<'_> {
             let historical = std::mem::replace(&mut self.historical, Entry::new(parent_id));
 
             entry.history.get_or_insert_default().add_entry(historical);
+
+            // chiave patch: the snapshot was inserted at history index 0, shifting every
+            // other historical index, and it carries attachment/icon references of its
+            // own. Recompute the back-references so they stay accurate.
+            self.database.rebuild_entry_backrefs(self.id);
         }
     }
 }

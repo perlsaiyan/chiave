@@ -124,6 +124,71 @@ impl Database {
         GroupMut::new(self, self.root)
     }
 
+    /// chiave patch: rebuild the attachment back-reference set for one entry (current
+    /// version and every historical version). Back-references are what decide whether a
+    /// binary is still in use; the upstream code never populated them on load and did
+    /// not refresh them when history indices shifted.
+    pub(crate) fn rebuild_attachment_backrefs_for(&mut self, entry_id: EntryId) {
+        for a in self.attachments.values_mut() {
+            a.entries.retain(|&(e, _)| e != entry_id);
+        }
+        let Some(entry) = self.entries.get(&entry_id) else {
+            return;
+        };
+        let mut refs: Vec<(AttachmentId, Option<usize>)> =
+            entry.attachments.values().map(|id| (*id, None)).collect();
+        if let Some(h) = &entry.history {
+            for (i, he) in h.entries.iter().enumerate() {
+                refs.extend(he.attachments.values().map(|id| (*id, Some(i))));
+            }
+        }
+        for (aid, hi) in refs {
+            if let Some(a) = self.attachments.get_mut(&aid) {
+                a.entries.insert((entry_id, hi));
+            }
+        }
+    }
+
+    /// chiave patch: rebuild the custom-icon back-reference set for one entry.
+    pub(crate) fn rebuild_custom_icon_backrefs_for(&mut self, entry_id: EntryId) {
+        for icon in self.custom_icons.values_mut() {
+            icon.entries.retain(|&(e, _)| e != entry_id);
+        }
+        let Some(entry) = self.entries.get(&entry_id) else {
+            return;
+        };
+        let mut refs: Vec<(CustomIconId, Option<usize>)> = Vec::new();
+        if let Some(Icon::Custom(id)) = entry.icon.as_ref() {
+            refs.push((*id, None));
+        }
+        if let Some(h) = &entry.history {
+            for (i, he) in h.entries.iter().enumerate() {
+                if let Some(Icon::Custom(id)) = he.icon.as_ref() {
+                    refs.push((*id, Some(i)));
+                }
+            }
+        }
+        for (iid, hi) in refs {
+            if let Some(icon) = self.custom_icons.get_mut(&iid) {
+                icon.entries.insert((entry_id, hi));
+            }
+        }
+    }
+
+    /// chiave patch: rebuild both kinds of back-references for one entry.
+    pub(crate) fn rebuild_entry_backrefs(&mut self, entry_id: EntryId) {
+        self.rebuild_attachment_backrefs_for(entry_id);
+        self.rebuild_custom_icon_backrefs_for(entry_id);
+    }
+
+    /// chiave patch: drop an attachment from the pool if nothing references it any more.
+    pub(crate) fn remove_attachment_if_orphaned(&mut self, id: AttachmentId) {
+        let orphaned = self.attachments.get(&id).map(|a| a.entries.is_empty()).unwrap_or(false);
+        if orphaned {
+            self.attachments.remove(&id);
+        }
+    }
+
     /// Get an immutable reference to the recycle bin group, if it exists
     pub fn recycle_bin(&self) -> Option<GroupRef<'_>> {
         let recyclebin_id = self.meta.recyclebin_uuid.map(GroupId::from_uuid)?;

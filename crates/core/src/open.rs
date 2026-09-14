@@ -7,7 +7,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum OpenError {
-    #[error("cannot read {path}: {source}")]
+    #[error("cannot read {path}")]
     Io {
         path: PathBuf,
         #[source]

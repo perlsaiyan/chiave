@@ -224,8 +224,11 @@ fn lock_and_unlock() {
     let (_d, mut v) = open();
     v.cd("/Work").unwrap();
     let locked = v.lock();
+    assert!(locked.unlock(Some("wrong".to_string().into())).is_err());
     let v = locked.unlock(Some("test".to_string().into())).unwrap();
-    assert_eq!(v.cwd_path(), "/");
-    let (_d2, v) = open();
-    assert!(v.lock().unlock(Some("wrong".to_string().into())).is_err());
+    assert_eq!(v.cwd_path(), "/Work", "cwd survives lock/unlock");
+    let mut v = v;
+    let internet = v.resolve_group("/Internet").unwrap();
+    v.set_cwd(internet).unwrap();
+    assert_eq!(v.cwd_path(), "/Internet");
 }

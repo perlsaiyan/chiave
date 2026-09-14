@@ -457,3 +457,101 @@ fn upgrade_kdbx3_to_kdbx4_preserves_content() {
     let old = Vault::open(&report.backup.unwrap(), &creds, true).unwrap();
     assert_eq!(old.version().to_string(), "KDBX3.1");
 }
+
+#[test]
+fn attachments_add_read_remove_round_trip() {
+    let (_d, mut v) = open();
+    let id = v.resolve_entry("/Sample Entry").unwrap();
+    assert_eq!(v.attachments(id).unwrap(), [("note.txt".to_string(), 5)]);
+    assert_eq!(&*v.attachment_data(id, "note.txt").unwrap(), b"hello");
+
+    v.add_attachment(id, "key.pem", b"-----BEGIN-----".to_vec())
+        .unwrap();
+    assert_eq!(v.entry(id).unwrap().history_count, 1);
+    v.remove_attachment(id, "note.txt").unwrap();
+    assert_eq!(v.entry(id).unwrap().history_count, 2);
+    assert!(matches!(
+        v.remove_attachment(id, "nope"),
+        Err(WriteError::Resolve(chiave_core::ResolveError::NotFound(_)))
+    ));
+    // keepass-rs issue #360: removing an attachment must not corrupt history on save
+    let report = v.save(SaveOptions::default()).unwrap();
+    assert!(report.verified);
+    let r = reopen(&v);
+    assert_eq!(r.attachments(id).unwrap(), [("key.pem".to_string(), 15)]);
+    assert_eq!(r.entry(id).unwrap().history_count, 2);
+
+    if let Some(cli) = kpxc() {
+        let p = r.path().to_str().unwrap();
+        let pw = format!("{}\n", testdb::PASSWORD);
+        let out_file = _d.path().join("exported.pem");
+        let (ok, _, err) = run(
+            &cli,
+            &[
+                "attachment-export",
+                p,
+                "/Sample Entry",
+                "key.pem",
+                out_file.to_str().unwrap(),
+            ],
+            &pw,
+        );
+        assert!(ok, "{err}");
+        assert_eq!(std::fs::read(out_file).unwrap(), b"-----BEGIN-----");
+    }
+}
+
+#[test]
+fn shared_binary_survives_removal_from_one_entry() {
+    let Some(cli) = kpxc() else {
+        eprintln!("CHIAVE_KPXC_CLI not set; skipping");
+        return;
+    };
+    let (_d, v) = open();
+    let p = v.path().to_str().unwrap().to_string();
+    let pw = format!("{}\n", testdb::PASSWORD);
+    let src = _d.path().join("shared.bin");
+    std::fs::write(&src, b"same bytes in two entries").unwrap();
+    for entry in ["/Work/Servers/web01", "/Work/Servers/db01"] {
+        let (ok, _, err) = run(
+            &cli,
+            &[
+                "attachment-import",
+                &p,
+                entry,
+                "shared.bin",
+                src.to_str().unwrap(),
+            ],
+            &pw,
+        );
+        assert!(ok, "{err}");
+    }
+    let mut v = reopen(&v);
+    let web = v.resolve_entry("/Work/Servers/web01").unwrap();
+    let db01 = v.resolve_entry("/Work/Servers/db01").unwrap();
+    assert_eq!(v.attachments(web).unwrap()[0].0, "shared.bin");
+    v.remove_attachment(web, "shared.bin").unwrap();
+    v.save(SaveOptions::default()).unwrap();
+    let r = reopen(&v);
+    assert!(r.attachments(web).unwrap().is_empty());
+    assert_eq!(
+        &*r.attachment_data(db01, "shared.bin").unwrap(),
+        b"same bytes in two entries"
+    );
+    let out = _d.path().join("out.bin");
+    let (ok, _, err) = run(
+        &cli,
+        &[
+            "attachment-export",
+            &p,
+            "/Work/Servers/db01",
+            "shared.bin",
+            out.to_str().unwrap(),
+        ],
+        &pw,
+    );
+    assert!(ok, "{err}");
+    assert_eq!(std::fs::read(out).unwrap(), b"same bytes in two entries");
+    // history: one snapshot from KeePassXC's import, one from chiave's removal
+    assert_eq!(r.entry(web).unwrap().history_count, 2);
+}

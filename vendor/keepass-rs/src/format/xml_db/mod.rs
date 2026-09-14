@@ -158,6 +158,14 @@ impl KeePassFile {
         db.attachments = attachments;
         db.custom_icons = custom_icons;
 
+        // chiave patch: re-populate Attachment back-reference sets, which upstream never
+        // did on load (only custom icons were handled below). Without them, removing an
+        // attachment from one entry deleted a binary still used by other entries/history.
+        let entry_ids: Vec<crate::db::EntryId> = db.entries.keys().copied().collect();
+        for entry_id in entry_ids {
+            db.rebuild_attachment_backrefs_for(entry_id);
+        }
+
         // Re-populate CustomIcon back-reference sets.
         //
         // The XML parser creates CustomIcon values with empty `entries` and `groups` sets
