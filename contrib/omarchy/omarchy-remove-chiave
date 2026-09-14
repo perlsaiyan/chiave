@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# omarchy-remove-chiave -- uninstall chiave and undo the hotkey/window-rule
+# wiring added by omarchy-install-chiave. Mirrors the style of upstream
+# omarchy-remove-service-* scripts under bin/.
+#
+# Does NOT touch your .kdbx vault, config, or KeePassXC -- this only removes
+# the chiave binary and its omarchy integration bits.
+# Idempotent: safe to re-run if a step was already undone.
+set -euo pipefail
+
+CHIAVE_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HYPR_DIR="${HOME}/.config/hypr"
+BINDINGS_FILE="${HYPR_DIR}/bindings.lua"
+
+log()  { printf '==> %s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+require_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+# --- 1. package --------------------------------------------------------------
+
+if pacman -Qi chiave >/dev/null 2>&1; then
+	log "Removing chiave package"
+	if require_cmd omarchy-pkg-remove; then
+		omarchy-pkg-remove chiave
+	else
+		sudo pacman -Rns --noconfirm chiave
+	fi
+elif require_cmd cargo && [[ -x "${HOME}/.cargo/bin/chiave" ]]; then
+	log "Removing cargo-installed chiave (~/.cargo/bin/chiave)"
+	cargo uninstall chiave || rm -f "${HOME}/.cargo/bin/chiave"
+else
+	log "chiave does not appear to be installed; nothing to remove there"
+fi
+
+# --- 2. hotkey + window rule -------------------------------------------------
+#
+# Same caveat as the installer: this script does not know whether your
+# bindings.lua uses a separate include file, so it will only ever print
+# instructions rather than editing your Hyprland config -- editing someone's
+# hand-tuned bindings.lua automatically risks corrupting it or silently
+# removing unrelated lines.
+
+if [[ -f "$BINDINGS_FILE" ]] && grep -qE 'chiave (tui|shell)' "$BINDINGS_FILE" 2>/dev/null; then
+	cat <<EOF
+
+ACTION NEEDED:
+  ${BINDINGS_FILE} still contains a chiave binding
+  (o.rebind/o.bind referencing "chiave tui" or "chiave shell"). Remove those
+  lines by hand, and restore whatever the SUPER + SHIFT + SLASH chord
+  previously ran (e.g. re-add 1Password's binding if you are reinstalling
+  it, or omarchy's default) if you want the chord back.
+  Also remove the matching o.window rule for "^org\\.omarchy\\.chiave\$"
+  wherever you added it.
+  Then reload Hyprland config (hyprctl reload).
+
+EOF
+else
+	log "No chiave binding found in ${BINDINGS_FILE} (or file missing); nothing to undo there"
+fi
+
+log "Done. KeePassXC and your vault file were left untouched."
+log "See ${CHIAVE_REPO_DIR}/docs/omarchy.md if you are also migrating back to 1Password."

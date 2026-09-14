@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# omarchy-install-chiave -- install chiave + KeePassXC and wire up the
+# omarchy (quattro) hotkey, in the style of the upstream omarchy
+# omarchy-install-service-* scripts under bin/.
+#
+# What this does:
+#   1. Installs keepassxc (Arch extra) and chiave (AUR once published, else
+#      builds from source with cargo).
+#   2. Prints the Lua snippets to add to ~/.config/hypr/bindings.lua and the
+#      window-rule file, and appends them automatically ONLY if it can find
+#      an include-file layout it recognizes (see NOTE below).
+#   3. Offers to run omarchy-remove-service-1password so native-messaging
+#      manifests do not linger (issue #8916).
+#
+# Idempotent: safe to re-run. Does not touch your vault or any secrets.
+set -euo pipefail
+
+CHIAVE_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HYPR_DIR="${HOME}/.config/hypr"
+BINDINGS_FILE="${HYPR_DIR}/bindings.lua"
+SNIPPET_DIR="${CHIAVE_REPO_DIR}/contrib/omarchy"
+
+log()  { printf '==> %s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+
+require_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+# --- 1. packages -----------------------------------------------------------
+
+log "Installing KeePassXC (browser extension + ssh-agent companion)"
+if require_cmd omarchy-pkg-add; then
+	# omarchy-pkg-add wraps pacman/paru and is idempotent on an
+	# already-installed package.
+	omarchy-pkg-add keepassxc
+else
+	warn "omarchy-pkg-add not found; falling back to pacman directly"
+	sudo pacman -S --needed --noconfirm keepassxc
+fi
+
+log "Installing chiave"
+if pacman -Si chiave >/dev/null 2>&1 || (require_cmd paru && paru -Si chiave >/dev/null 2>&1); then
+	if require_cmd omarchy-pkg-add; then
+		omarchy-pkg-add chiave
+	elif require_cmd paru; then
+		paru -S --needed --noconfirm chiave
+	else
+		sudo pacman -S --needed --noconfirm chiave
+	fi
+else
+	warn "chiave is not yet in the AUR (or your AUR helper isn't installed)."
+	warn "Building and installing from source with 'cargo install --path .' instead."
+	warn "This installs to ~/.cargo/bin/chiave -- make sure that is on PATH."
+	if ! require_cmd cargo; then
+		echo "error: cargo not found; install rustup/cargo first (omarchy-pkg-add rustup)" >&2
+		exit 1
+	fi
+	( cd "${CHIAVE_REPO_DIR}" && cargo install --path . --locked )
+fi
+
+# --- 2. hotkey + window rule -------------------------------------------------
+#
+# NOTE ON UNCERTAINTY: whether quattro's bindings.lua supports splitting
+# user bindings into a separate `require`'d include file (as opposed to one
+# monolithic file that `omarchy update` can overwrite) was not confirmed
+# for this task. If ~/.config/hypr/bindings.lua already contains a
+# recognizable `require("bindings.d...")`-style include line, this script
+# appends to that include target; otherwise it refuses to edit your config
+# automatically and just prints the snippet, because a blind append risks
+# duplicate `o.rebind` calls or getting clobbered by the next
+# `omarchy update` (see docs/omarchy.md and issues #6933 / #1802).
+
+append_or_instruct() {
+	local label="$1" src="$2" dst="$3"
+	if [[ ! -f "$dst" ]]; then
+		log "$dst not found; skipping auto-edit for $label"
+		return 1
+	fi
+	if grep -qF "org.omarchy.chiave" "$dst" 2>/dev/null || grep -qF "chiave tui" "$dst" 2>/dev/null; then
+		log "$label already references chiave in $dst; leaving it alone (idempotent)"
+		return 0
+	fi
+	log "No known include-file layout confirmed for $label; not auto-editing $dst"
+	return 1
+}
+
+echo
+log "Hotkey and window-rule snippets (from ${SNIPPET_DIR}):"
+echo "---------------------------------------------------------------"
+cat "${SNIPPET_DIR}/bindings.lua"
+echo "---------------------------------------------------------------"
+cat "${SNIPPET_DIR}/window.lua"
+echo "---------------------------------------------------------------"
+
+if ! append_or_instruct "bindings" "${SNIPPET_DIR}/bindings.lua" "${BINDINGS_FILE}"; then
+	cat <<EOF
+
+ACTION NEEDED:
+  1. Open ${BINDINGS_FILE} and paste in the o.rebind/o.bind lines shown
+     above (next to the other password-manager binding).
+  2. Add the o.window rule shown above wherever your other window rules
+     live (e.g. ~/.config/hypr/apps/ or a windows override file).
+  3. Reload Hyprland config (hyprctl reload) or re-log to pick it up.
+
+EOF
+fi
+
+# --- 3. offer to remove 1Password -------------------------------------------
+
+if require_cmd omarchy-remove-service-1password; then
+	read -r -p "Remove 1Password now with omarchy-remove-service-1password? [y/N] " reply || reply="n"
+	case "$reply" in
+		[yY]*)
+			log "Running omarchy-remove-service-1password"
+			omarchy-remove-service-1password
+			;;
+		*)
+			log "Skipping 1Password removal. Run 'omarchy-remove-service-1password' yourself"
+			log "when ready -- it cleans up native-messaging manifests that the generic"
+			log "'omarchy-remove-*' helper leaves behind (see issue #8916)."
+			;;
+	esac
+else
+	log "omarchy-remove-service-1password not found on this system; nothing to remove"
+	log "(you may not have 1Password installed via omarchy, or the script name changed)"
+fi
+
+log "Done. See ${CHIAVE_REPO_DIR}/docs/omarchy.md for the full migration guide."

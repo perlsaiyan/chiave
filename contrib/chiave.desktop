@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=chiave
+GenericName=Password Manager
+Comment=KeePass KDBX shell and TUI for the terminal
+Exec=chiave tui
+Icon=utility-terminal
+Terminal=true
+Categories=Utility;Security;
+StartupWMClass=org.omarchy.chiave
+NoDisplay=false

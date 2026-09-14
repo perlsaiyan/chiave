@@ -1,0 +1,62 @@
+# Maintainer: (fill in your name and email before publishing to the AUR)
+#
+# NOTE: chiave is not published to the AUR yet (PLAN.md phase 4). This
+# PKGBUILD is a starting point for when it is; it assumes a GitHub release
+# tag "v0.1.0" exists. Until then, contrib/omarchy/omarchy-install-chiave
+# falls back to `cargo install --path .` directly from a checkout.
+#
+# UNCERTAIN: no LICENSE file exists in the repository root as of this
+# writing even though Cargo.toml declares `license = "MIT OR Apache-2.0"`.
+# Add LICENSE-MIT / LICENSE-APACHE (or a single LICENSE) before cutting a
+# real release, or drop the `install -Dm644 LICENSE` line below.
+pkgname=chiave
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="KeePass KDBX shell and TUI for the terminal (a compiled kpcli successor)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/perlsaiyan/chiave"
+license=('MIT' 'Apache-2.0')
+depends=('gcc-libs')
+makedepends=('cargo')
+optdepends=(
+	'wl-clipboard: Wayland clipboard support (wl-copy/wl-paste)'
+	'xclip: X11 clipboard fallback'
+	'keepassxc: browser extension + ssh-agent integration against the same vault'
+)
+provides=('chiave')
+conflicts=('chiave')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# UNCERTAIN: placeholder checksum -- replace with the real sha256sum of the
+# release tarball (e.g. `updpkgsums` or `sha256sum` against the downloaded
+# file) before publishing. 'SKIP' must not be used for a real AUR upload.
+sha256sums=('SKIP')
+
+prepare() {
+	cd "$pkgname-$pkgver"
+	cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+	cd "$pkgname-$pkgver"
+	export RUSTUP_TOOLCHAIN=stable
+	export CARGO_TARGET_DIR=target
+	cargo build --frozen --release --locked
+}
+
+check() {
+	cd "$pkgname-$pkgver"
+	cargo test --frozen --workspace --locked
+}
+
+package() {
+	cd "$pkgname-$pkgver"
+	install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+	# Only install these if present in the source tree -- see the
+	# LICENSE note at the top of this file.
+	[[ -f LICENSE ]] && install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	[[ -f README.md ]] && install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+	if [[ -f "$srcdir/../chiave.desktop" ]]; then
+		install -Dm644 "$srcdir/../chiave.desktop" \
+			"$pkgdir/usr/share/applications/chiave.desktop"
+	fi
+}
