@@ -97,6 +97,8 @@ pub struct App {
 
     pub(crate) message: String,
     pub(crate) message_is_error: bool,
+    /// When the current message was set; informational messages expire in `tick`.
+    pub(crate) message_at: Option<Instant>,
     pub(crate) clip_state: Option<ClipState>,
     pub(crate) db_label: String,
     pub(crate) file_label: String,
@@ -174,6 +176,7 @@ impl App {
             gen: None,
             unlock: Unlock::default(),
             message: String::new(),
+            message_at: None,
             message_is_error: false,
             clip_state: None,
             db_label,
@@ -325,14 +328,24 @@ impl App {
 
     // ----- state upkeep -----------------------------------------------------
 
+    /// How long an informational status message stays before the key hints return.
+    pub const MESSAGE_TTL: Duration = Duration::from_secs(5);
+
     fn set_msg(&mut self, msg: impl Into<String>) {
         self.message = msg.into();
         self.message_is_error = false;
+        self.message_at = Some(Instant::now());
     }
 
     fn set_err(&mut self, msg: impl Into<String>) {
         self.message = msg.into();
         self.message_is_error = true;
+        self.message_at = Some(Instant::now());
+    }
+
+    fn clear_msg(&mut self) {
+        self.message.clear();
+        self.message_at = None;
     }
 
     fn push_mode(&mut self, mode: Mode) {
@@ -446,8 +459,19 @@ impl App {
             if now >= clip.deadline {
                 self.clip_state = None;
                 self.set_msg("Clipboard cleared");
+                // stamp with the caller's clock so an injected `now` expires it too
+                self.message_at = Some(now);
             } else {
                 clip.remaining = clip.deadline.saturating_duration_since(now).as_secs() + 1;
+            }
+        }
+        // Informational messages give way to the key hints after a while; errors stay
+        // until the next key press.
+        if !self.message_is_error {
+            if let Some(at) = self.message_at {
+                if now.saturating_duration_since(at) >= Self::MESSAGE_TTL {
+                    self.clear_msg();
+                }
             }
         }
         if self.vault.is_some() {
@@ -492,7 +516,7 @@ impl App {
         self.entry_sel = 0;
         self.tree.rows.clear();
         self.search.clear();
-        self.message.clear();
+        self.clear_msg();
         self.unlock = Unlock::default();
         self.mode_stack.clear();
         self.mode = Mode::Locked;
@@ -602,7 +626,7 @@ impl App {
                         deadline: Instant::now() + d,
                         remaining: d.as_secs(),
                     });
-                    self.message.clear();
+                    self.clear_msg();
                     self.message_is_error = false;
                 }
                 None => {
@@ -699,6 +723,10 @@ impl App {
             return;
         }
         self.last_input = Instant::now();
+        if self.message_is_error {
+            self.clear_msg();
+            self.message_is_error = false;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && matches!(key.code, KeyCode::Char('c')) && self.mode != Mode::Dialog {
             self.dialog = Some(Dialog::yes_no(

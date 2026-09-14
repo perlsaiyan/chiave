@@ -806,3 +806,48 @@ fn no_rgb_or_indexed_colours_reach_the_screen() {
     // And at the narrow layouts too.
     assert_palette_only(&buffer_at(&h.app, 50, 15), "narrow locked");
 }
+
+#[test]
+fn status_messages_expire_and_hints_return() {
+    let mut h = harness_with(TuiOptions {
+        clip_timeout: Some(Duration::from_secs(10)),
+        ..TuiOptions::default()
+    });
+    h.ch('j');
+    h.ch('j'); // Internet
+    h.key(KeyCode::Enter);
+    h.ch('y');
+    assert!(h.app.message().contains("copied"), "{}", h.app.message());
+    let start = Instant::now();
+    h.app.tick(start + Duration::from_secs(11));
+    assert_eq!(h.app.message(), "Clipboard cleared");
+    h.app.tick(start + Duration::from_secs(13));
+    assert_eq!(
+        h.app.message(),
+        "Clipboard cleared",
+        "still within the message TTL"
+    );
+    h.app
+        .tick(start + Duration::from_secs(11) + chiave_tui::App::MESSAGE_TTL);
+    assert!(h.app.message().is_empty(), "message should have expired");
+    let screen = h.render();
+    assert!(!screen.contains("Clipboard cleared"), "{screen}");
+}
+
+#[test]
+fn error_messages_stay_until_the_next_key() {
+    let mut h = harness_with(TuiOptions {
+        read_only: true,
+        ..TuiOptions::default()
+    });
+    h.ch('j');
+    h.ch('j');
+    h.key(KeyCode::Enter);
+    h.ch('e'); // refused: read-only
+    let msg = h.app.message();
+    assert!(!msg.is_empty(), "expected a read-only message");
+    h.app.tick(Instant::now() + Duration::from_secs(60));
+    assert_eq!(h.app.message(), msg, "errors do not time out");
+    h.ch('j');
+    assert!(h.app.message().is_empty(), "next key clears the error");
+}
