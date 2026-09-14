@@ -311,10 +311,12 @@ Verified on omarchy quattro (Hyprland, 2026-09-14) with a release build:
 - After the 10 s timeout `wl-paste` reported "Nothing is copied": the helper's
   read-back, compare and `copy::clear` path works.
 
-**Not verified yet:**
+- The omarchy quattro clipboard-history plugin did not record the secret
+  (checked in the history UI after an `xp`, with an ordinary text copy present
+  as a control).
 
-- That the quattro clipboard-history plugin, cliphist and Klipper actually
-  skip the entry (check the history UI after an `xp`).
+**Not verified yet:** cliphist and Klipper on other setups (both honour the
+same hint by design).
 - The `is_protocol_missing` → `wl-copy` fallback trigger: the string matching
   against `wl-clipboard-rs`' `MissingProtocol`/`NoSeats` error text was checked
   against the crate source, not against a live GNOME session.
