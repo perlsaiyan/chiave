@@ -36,6 +36,16 @@ timeout = 300               # idle seconds before the shell re-asks the password
 Environment: `CHIAVE_KDB`, `CHIAVE_KEYFILE`, `CHIAVE_PASSWORD` (scripts only),
 `CHIAVE_CLIPBOARD=wayland|x11|wl-copy|none`.
 
+## TOTP
+
+chiave reads TOTP seeds from the KeePassXC `otp` field (an `otpauth://` URI,
+the KDBX4-native convention shared with KeePassXC, KeePassDX and Strongbox)
+and, for vaults that grew up under kpcli, from a `2FA-TOTP: <base32>` line in
+the notes. Both show as a live code in `show`, `otp`, `xo` and the TUI; the
+notes seed is printed as `<redacted>` unless you ask with `show -a -f`.
+`otp --migrate <entry>` (or `--all`) moves a notes seed into the `otp` field
+and deletes the line, so KeePassXC and phone apps see it too.
+
 ## Development
 
 ```sh

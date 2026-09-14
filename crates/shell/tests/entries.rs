@@ -58,7 +58,14 @@ fn show_marks_expired_entries_and_otp() {
         .contains("Title: db01 *EXPIRED*"));
     let out = h.ok("ls /Internet");
     assert!(out.contains("[otp]"), "{out}");
-    assert!(h.ok("show 2").contains("OTP: configured"));
+    let shown = h.ok("show 2");
+    let code = shown
+        .lines()
+        .find(|l| l.starts_with("OTP: "))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .expect("live OTP line");
+    assert_eq!(code.len(), 6, "{shown}");
+    assert!(shown.contains("(valid"), "{shown}");
 }
 
 #[test]
@@ -157,9 +164,9 @@ fn stats_reports_the_database() {
     let out = h.ok("stats");
     assert!(out.contains("Name: Sample"), "{out}");
     assert!(out.contains("Version: KDBX4"), "{out}");
-    assert!(out.contains("Entries: 7"), "{out}");
+    assert!(out.contains("Entries: 8"), "{out}");
     assert!(out.contains("Expired: 1"), "{out}");
-    assert!(out.contains("With OTP: 1"), "{out}");
+    assert!(out.contains("With OTP: 2"), "{out}");
     assert!(out.contains("Mode: read-write"), "{out}");
 }
 

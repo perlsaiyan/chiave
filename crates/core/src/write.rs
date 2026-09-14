@@ -534,6 +534,56 @@ impl Vault {
         Ok(new_id)
     }
 
+    // ----- otp --------------------------------------------------------------
+
+    /// Move a kpcli-style `2FA-TOTP:` seed from the notes into the native `otp` field
+    /// (as an otpauth URI) and delete that line from the notes. Returns false when the
+    /// entry has no notes seed or already has an `otp` field.
+    pub fn migrate_notes_otp(&mut self, id: EntryId) -> Result<bool, WriteError> {
+        self.ensure_writable()?;
+        let (uri, new_notes) = {
+            let e = self.db.entry(id).ok_or(WriteError::Gone)?;
+            let Some(crate::otp::OtpSource::Notes(n)) = crate::otp::source_of(&e) else {
+                return Ok(false);
+            };
+            let uri =
+                crate::otp::to_otpauth(&n.secret, e.get_title().unwrap_or("entry"), &n.algorithm);
+            let notes = e.get(fields::NOTES).unwrap_or("");
+            let kept: Vec<&str> = notes
+                .lines()
+                .filter(|l| l.trim_end_matches('\r') != n.line)
+                .collect();
+            (uri, kept.join("\n").trim_end().to_string())
+        };
+        let mut patch = EntryPatch::default().set_secret(fields::OTP, uri);
+        patch = if new_notes.is_empty() {
+            patch.remove(fields::NOTES)
+        } else {
+            patch.set_plain(fields::NOTES, new_notes)
+        };
+        self.edit_entry(id, patch)
+    }
+
+    /// Migrate every entry with a notes seed. Returns the ids that changed.
+    pub fn migrate_all_notes_otp(&mut self) -> Result<Vec<EntryId>, WriteError> {
+        self.ensure_writable()?;
+        let mut ids = Vec::new();
+        let mut stack = vec![self.root()];
+        while let Some(g) = stack.pop() {
+            if let Some(group) = self.db.group(g) {
+                ids.extend(group.entries().map(|e| e.id()));
+                stack.extend(group.groups().map(|c| c.id()));
+            }
+        }
+        let mut done = Vec::new();
+        for id in ids {
+            if self.migrate_notes_otp(id)? {
+                done.push(id);
+            }
+        }
+        Ok(done)
+    }
+
     // ----- attachments ------------------------------------------------------
 
     /// Names and sizes of an entry's attachments, sorted by name.

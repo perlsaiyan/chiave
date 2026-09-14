@@ -110,8 +110,13 @@ pub struct EntryView {
     pub username: Option<String>,
     pub password: Option<SecretString>,
     pub url: Option<String>,
+    /// Notes with any legacy `2FA-TOTP:` seed replaced by `<redacted>`. Safe to display.
     pub notes: Option<String>,
+    /// Notes exactly as stored. Use this when editing; never print it without an explicit reveal.
+    pub notes_raw: Option<SecretString>,
     pub has_otp: bool,
+    /// Where the TOTP seed lives, when there is one.
+    pub otp_source: Option<crate::otp::OtpSource>,
     /// Custom fields in name order, standard fields excluded.
     pub custom: Vec<(String, FieldValue)>,
     pub tags: Vec<String>,
@@ -498,7 +503,7 @@ impl Vault {
                 .map(str::to_string),
             url: e.get_url().filter(|s| !s.is_empty()).map(str::to_string),
             expired: is_expired(&e.times),
-            has_otp: e.get_raw_otp_value().is_some(),
+            has_otp: crate::otp::source_of(e).is_some(),
         }
     }
 
@@ -628,6 +633,12 @@ impl Vault {
             Icon::BuiltIn(n) => format!("builtin:{n}"),
             Icon::Custom(c) => format!("custom:{}", c.uuid()),
         });
+        let otp_source = crate::otp::source_of(&e);
+        let notes_raw = e.get(fields::NOTES).filter(|s| !s.is_empty());
+        let notes_display = notes_raw.map(|n| match &otp_source {
+            Some(crate::otp::OtpSource::Notes(no)) => crate::otp::redact(n, &no.secret),
+            _ => n.to_string(),
+        });
         Ok(EntryView {
             id,
             uuid: id.uuid(),
@@ -643,11 +654,10 @@ impl Vault {
                 .filter(|s| !s.is_empty())
                 .map(|p| SecretString::from(p.to_string())),
             url: e.get_url().filter(|s| !s.is_empty()).map(str::to_string),
-            notes: e
-                .get(fields::NOTES)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
-            has_otp: e.get_raw_otp_value().is_some(),
+            notes: notes_display,
+            notes_raw: notes_raw.map(|n| SecretString::from(n.to_string())),
+            has_otp: otp_source.is_some(),
+            otp_source,
             custom,
             tags: e.tags.clone(),
             attachments,
@@ -671,10 +681,7 @@ impl Vault {
 
     pub fn totp(&self, id: EntryId) -> Result<OtpCode, VaultError> {
         let e = self.db.entry(id).ok_or(VaultError::Gone)?;
-        if e.get_raw_otp_value().is_none() {
-            return Err(VaultError::NoOtp);
-        }
-        let totp = e.get_otp()?;
+        let totp = crate::otp::totp_of(&e).ok_or(VaultError::NoOtp)??;
         let code = totp.value_now()?;
         Ok(OtpCode {
             code: code.code,
@@ -701,7 +708,7 @@ impl Vault {
                 if is_expired(&e.times) {
                     expired += 1;
                 }
-                if e.get_raw_otp_value().is_some() {
+                if crate::otp::source_of(&e).is_some() {
                     with_otp += 1;
                 }
             }

@@ -207,7 +207,10 @@ impl FormState {
                 .map(|p| p.expose_secret())
                 .unwrap_or(""),
             view.url.as_deref().unwrap_or(""),
-            view.notes.as_deref().unwrap_or(""),
+            view.notes_raw
+                .as_ref()
+                .map(|n| n.expose_secret())
+                .unwrap_or(""),
             &expiry,
         );
         let mut original_custom = Vec::new();

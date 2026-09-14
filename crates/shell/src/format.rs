@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 
 use chiave_core::path::escape;
-use chiave_core::{EntryView, ExposeSecret, FieldValue, FindHit, Listing};
+use chiave_core::{EntryView, ExposeSecret, FieldValue, FindHit, Listing, OtpCode, OtpSource};
 use chrono::NaiveDateTime;
 
 pub const MASK: &str = "********";
@@ -80,6 +80,11 @@ pub fn hits(hits: &[FindHit]) -> String {
 /// `show` output. `full` reveals the password and protected custom fields,
 /// `all` adds times, icon, history count and UUID.
 pub fn entry(e: &EntryView, full: bool, all: bool) -> String {
+    entry_with_otp(e, full, all, None)
+}
+
+/// `show` output with the current TOTP code when the entry has one.
+pub fn entry_with_otp(e: &EntryView, full: bool, all: bool, otp: Option<&OtpCode>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "Path: {}", e.path);
     let _ = write!(out, "Title: {}", e.title);
@@ -95,7 +100,13 @@ pub fn entry(e: &EntryView, full: bool, all: bool) -> String {
     };
     let _ = writeln!(out, "Pass: {pass}");
     let _ = writeln!(out, "URL: {}", e.url.as_deref().unwrap_or(""));
-    if let Some(n) = &e.notes {
+    // Like kpcli: a legacy 2FA seed in the notes is redacted unless both -a and -f are given.
+    let notes = if full && all {
+        e.notes_raw.as_ref().map(|n| n.expose_secret().to_string())
+    } else {
+        e.notes.clone()
+    };
+    if let Some(n) = &notes {
         let _ = writeln!(out, "Notes: {}", indented(n, 7));
     }
     for (name, value) in &e.custom {
@@ -113,7 +124,17 @@ pub fn entry(e: &EntryView, full: bool, all: bool) -> String {
         let _ = writeln!(out, "Attachments: {}", e.attachments.join(", "));
     }
     if e.has_otp {
-        out.push_str("OTP: configured\n");
+        match otp {
+            Some(code) => {
+                let _ = writeln!(out, "OTP: {} (valid {}s)", code.code, code.valid_for_secs);
+            }
+            None => out.push_str("OTP: configured\n"),
+        }
+        if matches!(e.otp_source, Some(OtpSource::Notes(_))) {
+            out.push_str(
+                "       (seed stored in notes; `otp --migrate` moves it to the otp field)\n",
+            );
+        }
     }
     if all {
         let _ = writeln!(out, "Created: {}", time(e.created));

@@ -26,7 +26,7 @@ fn ls_numbers_entries_alphabetically_and_marks_them() {
         .skip_while(|l| *l != "=== Entries ===")
         .skip(1)
         .collect();
-    assert_eq!(entries.len(), 3, "{out}");
+    assert_eq!(entries.len(), 4, "{out}");
     assert!(entries[0].starts_with(r"1. Comcast\/Xfinity"), "{out}");
     assert!(entries[1].starts_with("2. GitHub [otp]"), "{out}");
     assert!(entries[1].ends_with("perlsaiyan"), "{out}");

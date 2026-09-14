@@ -38,7 +38,12 @@ fn ls_sorts_and_numbers_entries() {
         .collect();
     assert_eq!(
         titles,
-        [(1, "Comcast/Xfinity"), (2, "GitHub"), (3, "GitHub")]
+        [
+            (1, "Comcast/Xfinity"),
+            (2, "GitHub"),
+            (3, "GitHub"),
+            (4, "Legacy 2FA")
+        ]
     );
     assert!(l.entries[1].has_otp || l.entries[2].has_otp);
 }
@@ -211,9 +216,9 @@ fn stats_count_everything() {
     let (_d, v) = open();
     let s = v.stats();
     assert_eq!(s.groups, 6);
-    assert_eq!(s.entries, 7);
+    assert_eq!(s.entries, 8);
     assert_eq!(s.expired, 1);
-    assert_eq!(s.with_otp, 1);
+    assert_eq!(s.with_otp, 2);
     assert!(s.recycle_bin_enabled);
     assert_eq!(s.name.as_deref(), Some("Sample"));
     assert!(s.kdf.contains("Argon2"), "{}", s.kdf);
@@ -231,4 +236,43 @@ fn lock_and_unlock() {
     let internet = v.resolve_group("/Internet").unwrap();
     v.set_cwd(internet).unwrap();
     assert_eq!(v.cwd_path(), "/Internet");
+}
+
+#[test]
+fn legacy_notes_otp_is_detected_redacted_and_generates_codes() {
+    let (_d, mut v) = open();
+    let id = v.resolve_entry("/Internet/Legacy 2FA").unwrap();
+    let e = v.entry(id).unwrap();
+    assert!(e.has_otp);
+    assert!(matches!(
+        e.otp_source,
+        Some(chiave_core::OtpSource::Notes(_))
+    ));
+    assert_eq!(
+        e.notes.as_deref(),
+        Some("recovery codes in the safe\n2FA-TOTP: <redacted>\nlast line")
+    );
+    assert!(e
+        .notes_raw
+        .as_ref()
+        .unwrap()
+        .expose_secret()
+        .contains("JBSWY3DPEHPK3PXP"));
+    let code = v.totp(id).unwrap();
+    assert_eq!(code.code.len(), 6);
+    assert_eq!(code.period_secs, 30);
+    // same seed as the native GitHub entry, so the codes agree
+    let gh = v
+        .find("GitHub", Default::default())
+        .into_iter()
+        .map(|h| h.id)
+        .find(|i| {
+            matches!(
+                v.entry(*i).unwrap().otp_source,
+                Some(chiave_core::OtpSource::Field)
+            )
+        })
+        .unwrap();
+    assert_eq!(v.totp(gh).unwrap().code, v.totp(id).unwrap().code);
+    assert_eq!(v.stats().with_otp, 2);
 }

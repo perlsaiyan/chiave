@@ -30,6 +30,7 @@ fn add_entry(g: &mut GroupMut<'_>, title: &str, user: &str, pass: &str, url: Opt
 ///   Internet/
 ///     GitHub               perlsaiyan, TOTP
 ///     GitHub               someone-else   (duplicate title)
+///     Legacy 2FA           old-timer, kpcli-style "2FA-TOTP:" seed in the notes
 ///     Comcast/Xfinity      slash in title
 ///   Work/
 ///     Servers/
@@ -69,6 +70,15 @@ pub fn sample() -> Database {
                 );
             });
             add_entry(g, "GitHub", "someone-else", "other-pass", None);
+            g.add_entry().edit(|e| {
+                e.set_unprotected(fields::TITLE, "Legacy 2FA");
+                e.set_unprotected(fields::USERNAME, "old-timer");
+                e.set_protected(fields::PASSWORD, "legacy-pass");
+                e.set_unprotected(
+                    fields::NOTES,
+                    "recovery codes in the safe\n2FA-TOTP: JBSWY3DPEHPK3PXP\nlast line",
+                );
+            });
             add_entry(g, "Comcast/Xfinity", "tom", "cable", Some("https://xfinity.com"));
         });
         root.add_group().edit(|g| {

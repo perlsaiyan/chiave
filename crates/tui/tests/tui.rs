@@ -130,10 +130,13 @@ fn internet_group_lists_three_entries_and_marks_the_otp_one() {
     let mut h = harness();
     h.ch('j');
     h.ch('j'); // Sample -> Empty -> Internet
-    assert_eq!(h.app.entries().len(), 3);
+    assert_eq!(h.app.entries().len(), 4);
     let titles: Vec<&str> = h.app.entries().iter().map(|e| e.title.as_str()).collect();
-    assert_eq!(titles, ["Comcast/Xfinity", "GitHub", "GitHub"]);
-    assert_eq!(h.app.entries().iter().filter(|e| e.has_otp).count(), 1);
+    assert_eq!(
+        titles,
+        ["Comcast/Xfinity", "GitHub", "GitHub", "Legacy 2FA"]
+    );
+    assert_eq!(h.app.entries().iter().filter(|e| e.has_otp).count(), 2);
     let screen = h.render();
     assert!(screen.contains("[otp]"), "{screen}");
 }

@@ -307,7 +307,9 @@ impl Shell {
                 expired,
                 query,
             } => self.cmd_find(&query, all_fields, expired, out)?,
-            Command::Otp { spec } => self.cmd_otp(&spec, out)?,
+            Command::Otp { spec, migrate, all } => {
+                self.cmd_otp(spec.as_deref(), migrate, all, out)?
+            }
             Command::Xu { spec } => self.cmd_copy_text(&spec, Field::Username, out)?,
             Command::Xw { spec } => self.cmd_copy_text(&spec, Field::Url, out)?,
             Command::Xp { spec } => self.cmd_copy_secret(&spec, Field::Password, out)?,
@@ -497,7 +499,16 @@ impl Shell {
         let vault = self.need_vault()?;
         let id = vault.resolve_entry(spec)?;
         let view = vault.entry(id)?;
-        write!(out, "{}", format::entry(&view, full, all))?;
+        let otp = if view.has_otp {
+            vault.totp(id).ok()
+        } else {
+            None
+        };
+        write!(
+            out,
+            "{}",
+            format::entry_with_otp(&view, full, all, otp.as_ref())
+        )?;
         Ok(())
     }
 
@@ -555,8 +566,43 @@ impl Shell {
         Ok(())
     }
 
-    fn cmd_otp(&mut self, spec: &str, out: &mut dyn Write) -> anyhow::Result<()> {
+    fn cmd_otp(
+        &mut self,
+        spec: Option<&str>,
+        migrate: bool,
+        all: bool,
+        out: &mut dyn Write,
+    ) -> anyhow::Result<()> {
         let vault = self.need_vault()?;
+        if migrate {
+            if all {
+                let moved = vault.migrate_all_notes_otp()?;
+                for id in &moved {
+                    writeln!(out, "Migrated {}", vault.entry_path(*id))?;
+                }
+                writeln!(
+                    out,
+                    "{} entr{} migrated to the otp field.",
+                    moved.len(),
+                    if moved.len() == 1 { "y" } else { "ies" }
+                )?;
+                return Ok(());
+            }
+            let spec =
+                spec.ok_or_else(|| anyhow::anyhow!("otp --migrate needs an entry or --all"))?;
+            let id = vault.resolve_entry(spec)?;
+            if vault.migrate_notes_otp(id)? {
+                writeln!(
+                    out,
+                    "Migrated {}: seed moved from notes to the otp field.",
+                    vault.entry_path(id)
+                )?;
+            } else {
+                writeln!(out, "Nothing to migrate: no 2FA-TOTP line in the notes, or the otp field is already set.")?;
+            }
+            return Ok(());
+        }
+        let spec = spec.ok_or_else(|| anyhow::anyhow!("otp needs an entry"))?;
         let id = vault.resolve_entry(spec)?;
         let code = vault.totp(id)?;
         writeln!(out, "{} (valid {}s)", code.code, code.valid_for_secs)?;

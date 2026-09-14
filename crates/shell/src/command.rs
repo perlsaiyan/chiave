@@ -77,7 +77,13 @@ pub enum Command {
     /// Print the current one-time code for an entry
     Otp {
         /// Entry path, title or number from the last listing
-        spec: String,
+        spec: Option<String>,
+        /// Move a kpcli-style "2FA-TOTP:" seed from the notes into the otp field
+        #[arg(long)]
+        migrate: bool,
+        /// With --migrate: process every entry in the database
+        #[arg(long, requires = "migrate")]
+        all: bool,
     },
     /// Copy the username to the clipboard
     Xu { spec: String },

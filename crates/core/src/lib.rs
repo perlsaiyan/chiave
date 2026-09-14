@@ -5,6 +5,7 @@ pub mod fields;
 pub mod fingerprint;
 pub mod generate;
 pub mod open;
+pub mod otp;
 pub mod path;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testdb;
@@ -17,6 +18,7 @@ pub use keepass::config::DatabaseVersion;
 pub use keepass::db::{EntryId, GroupId};
 pub use keepass::Database;
 pub use open::{open, open_with_key, Credentials, OpenError};
+pub use otp::{NotesOtp, OtpSource};
 pub use secrecy::{ExposeSecret, SecretString};
 pub use vault::{
     is_expired, DiskState, EntryRow, EntryView, FieldValue, FindHit, FindOptions, GroupRow,

@@ -576,3 +576,45 @@ fn accessors_for_front_ends() {
         ("x/".to_string(), "Sl/ash".to_string())
     );
 }
+
+#[test]
+fn migrate_notes_otp_to_native_field() {
+    let (_d, mut v) = open();
+    let id = v.resolve_entry("/Internet/Legacy 2FA").unwrap();
+    let before = v.totp(id).unwrap().code;
+    assert!(v.migrate_notes_otp(id).unwrap());
+    assert!(!v.migrate_notes_otp(id).unwrap(), "second run is a no-op");
+    let e = v.entry(id).unwrap();
+    assert!(matches!(e.otp_source, Some(chiave_core::OtpSource::Field)));
+    assert_eq!(
+        e.notes.as_deref(),
+        Some("recovery codes in the safe\nlast line")
+    );
+    assert_eq!(e.history_count, 1);
+    assert_eq!(v.totp(id).unwrap().code, before);
+    v.save(SaveOptions::default()).unwrap();
+    let r = reopen(&v);
+    assert!(matches!(
+        r.entry(id).unwrap().otp_source,
+        Some(chiave_core::OtpSource::Field)
+    ));
+    assert!(r.pwck(r.root(), true).len() >= 7);
+    if let Some(cli) = kpxc() {
+        let (ok, out, err) = run(
+            &cli,
+            &[
+                "show",
+                "-t",
+                r.path().to_str().unwrap(),
+                "/Internet/Legacy 2FA",
+            ],
+            &format!("{}\n", testdb::PASSWORD),
+        );
+        assert!(ok, "{err}");
+        assert_eq!(
+            out.trim().len(),
+            6,
+            "KeePassXC generates a code from the migrated field: {out}"
+        );
+    }
+}
