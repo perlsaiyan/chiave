@@ -1,20 +1,25 @@
 //! chiave-core: the vault model shared by the shell, CLI and TUI front ends.
 
+pub mod fields;
+pub mod fingerprint;
 pub mod open;
 pub mod path;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testdb;
 pub mod vault;
+pub mod write;
 
+pub use fingerprint::Fingerprint;
 pub use keepass::config::DatabaseVersion;
 pub use keepass::db::{EntryId, GroupId};
 pub use keepass::Database;
 pub use open::{open, open_with_key, Credentials, OpenError};
 pub use secrecy::{ExposeSecret, SecretString};
 pub use vault::{
-    is_expired, EntryRow, EntryView, FieldValue, FindHit, FindOptions, GroupRow, Listing,
-    LockedVault, NodeId, OtpCode, ResolveError, Stats, Vault, VaultError,
+    is_expired, DiskState, EntryRow, EntryView, FieldValue, FindHit, FindOptions, GroupRow,
+    Listing, LockedVault, NodeId, OtpCode, ResolveError, Stats, Vault, VaultError,
 };
+pub use write::{EntryPatch, NewEntry, SaveError, SaveOptions, SaveReport, WriteError};
 
 /// One row of a recursive listing: a slash-separated path and whether it is a group.
 #[derive(Debug, Clone, PartialEq, Eq)]

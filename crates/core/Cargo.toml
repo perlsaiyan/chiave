@@ -14,6 +14,7 @@ secrecy.workspace = true
 keepass = { version = "0.13", features = ["save_kdbx4", "totp"] }
 chrono = "0.4"
 uuid = "1"
+tempfile = "3"
 
 [features]
 default = []

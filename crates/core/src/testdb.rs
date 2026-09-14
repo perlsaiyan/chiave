@@ -4,7 +4,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use chrono::{Duration, NaiveDateTime};
-use keepass::db::{fields, Database, GroupMut, Times};
+use keepass::db::{fields, Database, GroupMut, Times, Value};
 use keepass::DatabaseKey;
 
 use crate::Credentials;
@@ -53,6 +53,7 @@ pub fn sample() -> Database {
             e.set_protected("PIN", "1234");
             e.set_unprotected("Plain custom", "visible");
             e.tags.push("demo".into());
+            e.add_attachment("note.txt", Value::unprotected(b"hello".to_vec()));
         });
         root.add_group().edit(|g| g.name = "Empty".into());
         root.add_group().edit(|g| {

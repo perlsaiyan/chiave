@@ -164,14 +164,33 @@ impl LockedVault {
     }
 }
 
+/// Size and mtime of the file when we last read or wrote it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskState {
+    pub len: u64,
+    pub modified: Option<std::time::SystemTime>,
+}
+
+impl DiskState {
+    pub fn read(path: &Path) -> Option<DiskState> {
+        let m = std::fs::metadata(path).ok()?;
+        Some(DiskState {
+            len: m.len(),
+            modified: m.modified().ok(),
+        })
+    }
+}
+
 pub struct Vault {
-    db: Database,
-    key: DatabaseKey,
-    path: PathBuf,
-    keyfile: Option<PathBuf>,
-    read_only: bool,
-    cwd: GroupId,
-    listing: Vec<EntryId>,
+    pub(crate) db: Database,
+    pub(crate) key: DatabaseKey,
+    pub(crate) path: PathBuf,
+    pub(crate) keyfile: Option<PathBuf>,
+    pub(crate) read_only: bool,
+    pub(crate) cwd: GroupId,
+    pub(crate) listing: Vec<EntryId>,
+    pub(crate) modified: bool,
+    pub(crate) disk_state: Option<DiskState>,
 }
 
 impl Vault {
@@ -187,10 +206,18 @@ impl Vault {
             read_only,
             cwd,
             listing: Vec::new(),
+            modified: false,
+            disk_state: DiskState::read(path),
         })
     }
 
+    /// True when there are changes not yet written to disk.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.modified
+    }
+
     /// Drop the database and key material, keeping only what is needed to reopen.
+    /// Unsaved changes are discarded; check `has_unsaved_changes` first.
     pub fn lock(self) -> LockedVault {
         LockedVault {
             path: self.path,
